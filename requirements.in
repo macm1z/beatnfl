@@ -1,0 +1,9 @@
+# Direct dependencies. requirements.txt is generated from this with checksums.
+pandas==3.0.5
+numpy==2.5.3
+scipy==1.18.1
+scikit-learn==1.9.1
+requests==2.34.2
+pyarrow==25.0.1
+streamlit==1.65.0
+pytest==9.1.1
