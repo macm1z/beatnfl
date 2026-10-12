@@ -233,7 +233,7 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
 
     def label(i):
         if pd.isna(diff[i]):
-            return "no forecast"
+            return "not forecast (out or new)"
         if td[i]:
             return ("Yes ★" if diff[i] >= 8 else "Yes") if diff[i] >= 4 else "—"
         if not lean[i]:

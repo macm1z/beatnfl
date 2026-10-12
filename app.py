@@ -22,10 +22,64 @@ S = Settings.load()
 ss = st.session_state
 
 
+APP_ROOT = Path(__file__).resolve().parent
+if not (APP_ROOT / "beatnfl").exists():  # launched through a wrapper script
+    import beatnfl as _bn
+    APP_ROOT = Path(_bn.__file__).resolve().parent.parent
+ICON = {"ok": "✅", "warn": "⚠️", "fail": "❌", "skip": "⏭️"}
+
+
 def show_steps(steps):
-    for s in steps:
-        box = {"ok": st.success, "warn": st.warning, "fail": st.error, "skip": st.info}[s.status]
-        box(f"**{s.step}** — {s.message}" + (f"\n\n➜ {s.fix}" if s.fix else ""))
+    """One compact checklist. Problems are listed first with their fix; routine steps sit underneath."""
+    fails = [x for x in steps if x.status == "fail"]
+    warns = [x for x in steps if x.status == "warn"]
+    head = (f"❌ {len(fails)} step(s) failed" if fails else
+            f"⚠️ Ready, with {len(warns)} thing(s) to check" if warns else "✅ Everything loaded")
+    with st.container(border=True):
+        st.markdown(f"**{head}**")
+        for x in fails + warns:
+            st.markdown(f"{ICON[x.status]} **{x.step}** — {x.message}" + (f"  \n  ➜ {x.fix}" if x.fix else ""))
+        rest = [x for x in steps if x.status in ("ok", "skip")]
+        if rest:
+            with st.expander(f"Details ({len(rest)} steps)", expanded=not (fails or warns)):
+                for x in rest:
+                    st.markdown(f"{ICON[x.status]} **{x.step}** — {x.message}" + (f"  \n  ➜ {x.fix}" if x.fix else ""))
+
+
+def tidy(df: pd.DataFrame, rename: dict, ints=(), one=(), two=(), pct=(), money=()) -> tuple[pd.DataFrame, dict]:
+    """Readable table: friendly column names, empty columns dropped, sensible number formats.
+    Returns (frame, column_config) for st.data_editor; read-only tables go through show()."""
+    d = df[[c for c in rename if c in df]].rename(columns=rename).copy()
+    fmts = {}
+    for cols, fmt in ((ints, "%d"), (one, "%.1f"), (two, "%.2f"), (money, "$%d")):
+        for c in cols:
+            if c in d:
+                d[c] = pd.to_numeric(d[c], errors="coerce")
+                fmts[c] = fmt
+    for c in pct:
+        if c in d:
+            d[c] = pd.to_numeric(d[c], errors="coerce") * 100
+            fmts[c] = "%d%%"
+    d = d[[c for c in d.columns if c == "dk_id" or not d[c].isna().all()]]
+    for c in d.columns:
+        if d[c].dtype == object or pd.api.types.is_string_dtype(d[c]):
+            d[c] = d[c].astype(object).where(d[c].notna(), "").replace({"None": "", "nan": "", "<NA>": ""})
+    cfg = {c: st.column_config.NumberColumn(c, format=f) for c, f in fmts.items() if c in d.columns}
+    d.attrs["fmts"] = {c: f for c, f in fmts.items() if c in d.columns}
+    return d, cfg
+
+
+def show(d: pd.DataFrame, cfg: dict | None = None, **kw):
+    """Read-only table, already in a sensible order: formatted numbers, blank where a stat doesn't apply."""
+    fmts = d.attrs.get("fmts", {})
+    out = d.copy()
+    for c in out.columns:
+        f = fmts.get(c)
+        if f:
+            out[c] = [("" if pd.isna(v) else (f % v)) for v in out[c]]
+        elif out[c].dtype.kind == "f":
+            out[c] = ["" if pd.isna(v) else f"{v:g}" for v in out[c]]
+    st.dataframe(out, hide_index=True, width=kw.pop("width", "stretch"), **kw)
 
 
 def slate_banner():
@@ -92,7 +146,6 @@ with st.sidebar:
             else:
                 st.info("Close the BeatNFL window and start it again to load the update.")
     offline = st.toggle("Offline mode (use cached data only)", False)
-    st.caption(f"Data folder: `{HOME}`\n\nInbox: `{INBOX}`")
 
 tab_week, tab_saved, tab_yahoo, tab_research, tab_evidence, tab_status = st.tabs(
     ["This week", "Saved lineups", "My Yahoo team", "Research: games & props", "Evidence", "Data status"])
@@ -142,20 +195,22 @@ with tab_week:
     if r and r.pool is not None and "proj" in r.pool:
         st.subheader("2 · Player pool")
         pool = r.pool
-        cols = ["dk_id", "name", "pos", "team", "opp", "salary", "status", "injury_note", "proj", "value", "proj_paid",
-                "proj_sleeper", "proj_model", "proj_spread", "pct_rostered_yahoo", "sources"]
-        cols = [c for c in cols if c in pool]
-        view = pool[cols].copy()
+        names = {"dk_id": "dk_id", "name": "Player", "pos": "Pos", "team": "Team", "opp": "Opp", "salary": "Salary",
+                 "status": "Status", "injury_note": "Injury", "proj": "Proj", "value": "Pts/$1K", "proj_paid": "Yours",
+                 "proj_sleeper": "Sleeper", "proj_model": "Model", "pct_rostered_yahoo": "Yahoo %", "sources": "Sources"}
+        view, cfg = tidy(pool, names, one=("Proj", "Yours", "Sleeper", "Model"), two=("Pts/$1K",), money=("Salary",),
+                         ints=("Yahoo %",))
         view.insert(1, "Lock", view.dk_id.isin(ss.get("locks", [])))
         view.insert(2, "Exclude", view.dk_id.isin(ss.get("excludes", [])))
         f1, f2 = st.columns([1, 3])
         posf = f1.multiselect("Positions", ["QB", "RB", "WR", "TE", "DST"], [])
         if posf:
-            view = view[view.pos.isin(posf)]
-        f2.caption("Missing projections show blank (never 0) and are left out of lineups. "
-                   "`proj_spread` = disagreement between sources.")
-        ed = st.data_editor(view.sort_values("proj", ascending=False), hide_index=True, width="stretch",
-                            disabled=[c for c in view.columns if c not in ("Lock", "Exclude")], height=420)
+            view = view[view.Pos.isin(posf)]
+        f2.caption("Blank projection = no source covered that player; they're left out of lineups. "
+                   "Yours / Sleeper / Model are the individual sources behind **Proj**.")
+        cfg["dk_id"] = None  # hidden; kept for locks/excludes
+        ed = st.data_editor(view.sort_values("Proj", ascending=False), hide_index=True, width="stretch", height=420,
+                            column_config=cfg, disabled=[c for c in view.columns if c not in ("Lock", "Exclude")])
         ss["locks"] = ed[ed.Lock].dk_id.tolist() + [l for l in ss.get("locks", []) if l not in set(view.dk_id)]
         ss["excludes"] = ed[ed.Exclude].dk_id.tolist() + [l for l in ss.get("excludes", []) if l not in set(view.dk_id)]
 
@@ -187,8 +242,8 @@ with tab_week:
             if res.lineups:
                 if out["set_id"]:
                     st.info(f"Saved as set #{out['set_id']} — reopen any time under *Saved lineups*. "
-                            f"Files written to `{EXPORTS}`.")
-                st.dataframe(export.lineup_table(res.lineups, r.pool), hide_index=True, width="stretch")
+                            "Copies of both files are also in your BeatNFL/exports folder.")
+                st.dataframe(export.lineup_table(res.lineups, r.pool), hide_index=True, width="stretch", column_config={"Salary": st.column_config.NumberColumn("Salary", format="$%d")})
                 d1, d2 = st.columns(2)
                 for f, col, lab in zip(out["files"], (d1, d2), ("⬇ DraftKings upload CSV", "⬇ Readable lineups CSV")):
                     col.download_button(lab, Path(f).read_bytes(), file_name=Path(f).name, mime="text/csv")
@@ -201,14 +256,18 @@ with tab_saved:
     if sets.empty:
         st.info("No saved lineup sets yet.")
     else:
-        st.dataframe(sets, hide_index=True, width="stretch")
+        sv = sets.copy()
+        sv["Created"] = pd.to_datetime(sv.created_utc, utc=True).dt.tz_convert("America/New_York").dt.strftime("%a %b %-d, %-I:%M %p")
+        st.dataframe(sv.rename(columns={"id": "#", "name": "Name", "n": "Lineups", "slate": "Slate", "status": "Result"})[
+            ["#", "Name", "Created", "Lineups", "Slate", "Result"]], hide_index=True, width="stretch")
         sid = st.selectbox("Open set", sets.id.tolist(), format_func=lambda i: f"#{i} · {sets.set_index('id').at[i, 'name']}")
         d = storage.load_lineup_set(int(sid))
         _, pool = storage.get_projection_run(d["projection_run_id"])
         bad = [i + 1 for i, lu in enumerate(d["lineups"]) if optimizer.validate(lu, pool)]
-        st.caption(f"{len(d['lineups'])} lineups · created {d['created_utc']} UTC · revision {d['revision']} · "
+        st.caption(f"{len(d['lineups'])} lineups · created "
+                   f"{pd.Timestamp(d['created_utc']).tz_convert('America/New_York'):%a %b %-d, %-I:%M %p} · "
                    + ("all valid against the saved slate" if not bad else f"invalid: {bad}"))
-        st.dataframe(export.lineup_table(d["lineups"], pool), hide_index=True, width="stretch")
+        st.dataframe(export.lineup_table(d["lineups"], pool), hide_index=True, width="stretch", column_config={"Salary": st.column_config.NumberColumn("Salary", format="$%d")})
         c1, c2, c3 = st.columns(3)
         try:
             c1.download_button("⬇ DraftKings upload CSV", export.dk_csv_text(d["lineups"], pool),
@@ -302,17 +361,20 @@ with tab_yahoo:
                 rows, slots = ss.get("yroster"), ss.get("yslots")
                 if rows:
                     df = pd.DataFrame(rows)
-                    show = df[["slot", "name", "pos", "team", "opp", "status", "injury_note", "proj", "p_pass_yds",
-                               "p_rush_yds", "p_rec", "p_rec_yds", "p_any_td"]].rename(columns={
-                        "slot": "Yahoo slot", "proj": "Proj (PPR+bonus)", "p_pass_yds": "Pass yds", "p_rush_yds": "Rush yds",
-                        "p_rec": "Rec", "p_rec_yds": "Rec yds", "p_any_td": "TD chance"})
-                    st.dataframe(show, hide_index=True, width="stretch")
+                    ytbl, cfg = tidy(df, {"slot": "Yahoo slot", "name": "Player", "pos": "Pos", "team": "Team", "opp": "Opp",
+                                          "status": "Status", "injury_note": "Injury", "proj": "Proj pts",
+                                          "p_pass_yds": "Pass yds", "p_rush_yds": "Rush yds", "p_rec": "Rec",
+                                          "p_rec_yds": "Rec yds", "p_any_td": "TD chance"},
+                                     one=("Proj pts", "Rec"), ints=("Pass yds", "Rush yds", "Rec yds"), pct=("TD chance",))
+                    show(ytbl)
                     model_slots = [(s_, n) for s_, n in slots if s_ not in ("K", "DEF")]
                     sug = yahoo.suggest(rows, model_slots)
                     cur = {r["player_key"] for r in rows if r["slot"] not in ("BN", "IR", "IR+", "NA", "K", "DEF")}
                     best = {s_["player_key"] for s_ in sug if s_["player_key"]}
                     st.markdown("**Suggested starters** (kickers and defenses not projected — keep your choice)")
-                    st.dataframe(pd.DataFrame(sug).drop(columns=["player_key"]), hide_index=True)
+                    sg, sgc = tidy(pd.DataFrame(sug), {"slot": "Slot", "player": "Start", "proj": "Proj pts"}, one=("Proj pts",))
+                    sg["Start"] = sg["Start"].replace({"— nobody projected —": "— no healthy, projected player —"})
+                    show(sg)
                     ins = [r for r in rows if r["player_key"] in best - cur]
                     outs = [r for r in rows if r["player_key"] in cur - best]
                     if ins or outs:
@@ -360,8 +422,19 @@ with tab_research:
     st.subheader("Games")
     try:
         from beatnfl import research
-        st.dataframe(research.games_table(int(season), int(week), lines, offline=offline), hide_index=True,
-                     width="stretch")
+        gt = research.games_table(int(season), int(week), lines, offline=offline)
+        def _fav(game, m):
+            if pd.isna(m):
+                return ""
+            away, home = game.split(" @ ")
+            return f"{home if m > 0 else away} -{abs(m):.1f}" if abs(m) >= 0.05 else "Pick'em"
+        gt["Model spread"] = [_fav(g, m) for g, m in zip(gt.Game, gt["Model margin (home)"])]
+        gv, gc = tidy(gt, {"Game": "Game", "Market": "Spread", "Model spread": "Model spread", "Market total": "Total",
+                           "Model total": "Model total", "P(home covers)": "Home covers %", "Lines from": "Lines from"},
+                      one=("Total", "Model total"), pct=("Home covers %",))
+        show(gv)
+        st.caption("Model spread/total = the game model alone. Home covers % blends the model with the market, "
+                   "weighted 75% to the market.")
     except StepError as e:
         st.error(e.as_text())
 
@@ -378,7 +451,13 @@ with tab_research:
             except StepError as e:
                 st.error(e.as_text())
     if ss.get("mu") is not None:
-        st.dataframe(ss["mu"].sort_values("Pass edge", ascending=False), hide_index=True, width="stretch")
+        mu = ss["mu"].sort_values("Pass edge", ascending=False).copy()
+        mu["Success rate"] = mu["Success rate"] * 100
+        cfgm = {c: st.column_config.NumberColumn(c, format="%.2f") for c in ("Off EPA/play", "Opp def EPA allowed", "Pass edge", "Run edge")}
+        cfgm.update({c: st.column_config.NumberColumn(c, format="%.0f") for c in
+                     ("Success rate", "Explosive %", "Pass rate over exp. %", "Red zone TD %", "Sack rate %", "Opp sack rate %", "Plays/game")})
+        cfgm["Success rate"] = st.column_config.NumberColumn("Success %", format="%.0f")
+        st.dataframe(mu, hide_index=True, width="stretch", column_config=cfgm)
 
     st.subheader("Player forecasts & props")
     if st.button("Forecast every player this week"):
@@ -414,10 +493,14 @@ with tab_research:
     if fc is None:
         st.caption("Click the button to forecast every player in this week's games.")
     else:
-        cols_fc = ["name", "position", "team", "opp", "injury", "p_dk_pts", "p_pass_yds", "p_pass_att", "p_rush_yds",
-                   "p_rush_att", "p_rec", "p_rec_yds", "p_any_td", "yahoo_status", "yahoo_pct_rostered", "yahoo_pct_change"]
-        show = fc[[c for c in cols_fc if c in fc]].rename(columns=lambda c: c.replace("p_", "", 1) if c.startswith("p_") else c)
-        st.dataframe(show.sort_values("dk_pts", ascending=False).round(2), hide_index=True, width="stretch")
+        names = {"name": "Player", "position": "Pos", "team": "Team", "opp": "Opp", "injury": "Status",
+                 "p_dk_pts": "DK pts", "p_pass_yds": "Pass yds", "p_pass_att": "Pass att", "p_rush_yds": "Rush yds",
+                 "p_rush_att": "Rush att", "p_rec": "Rec", "p_rec_yds": "Rec yds", "p_any_td": "TD chance"}
+        if "yahoo_pct_rostered" in fc and fc.yahoo_pct_rostered.notna().any():
+            names.update({"yahoo_status": "Yahoo status", "yahoo_pct_rostered": "Yahoo %", "yahoo_pct_change": "Yahoo % chg"})
+        fv, fcfg = tidy(fc.sort_values("p_dk_pts", ascending=False), names, one=("DK pts", "Rec", "Yahoo % chg"),
+                        ints=("Pass yds", "Pass att", "Rush yds", "Rush att", "Rec yds", "Yahoo %"), pct=("TD chance",))
+        show(fv)
 
     st.subheader("Props")
     if not S.odds_api_key:
@@ -428,7 +511,8 @@ with tab_research:
     else:
         from beatnfl import research
         from beatnfl.sources import odds as _odds
-        mk = st.multiselect("Prop markets", list(_odds.PROP_MARKETS), research.CORE_PROP_MARKETS)
+        mk = st.multiselect("Prop markets", list(_odds.PROP_MARKETS), research.CORE_PROP_MARKETS,
+                            format_func=lambda m: research.STAT_NAMES.get(_odds.PROP_MARKETS.get(m, m), m))
         n_games = int(fc.game_id.nunique()) if fc is not None else 14
         st.caption(f"Each load costs about {len(mk) * n_games} Odds API credits ({len(mk)} markets × {n_games} games). "
                    "Free plan = 500/month, so about one full load per week. Books post most player props "
@@ -472,7 +556,7 @@ with tab_research:
 with tab_evidence:
     from beatnfl.config import HOME as _H
     files = sorted(glob.glob(str(_H / "evidence" / "backtest_*.json")))
-    bundled = Path(__file__).resolve().parent / "evidence" / "backtest_baseline.json"
+    bundled = APP_ROOT / "evidence" / "backtest_baseline.json"
     if not files and bundled.exists():
         files = [str(bundled)]
     if st.button("Re-run historical tests (≈3 min)"):
@@ -482,23 +566,52 @@ with tab_evidence:
         st.rerun()
     if files:
         ev = json.loads(Path(files[-1]).read_text())
-        st.caption(f"{ev['label']} · generated {ev['generated']} · {ev['train_rule']}")
-        st.markdown("**DK points — mean absolute error (lower is better)**")
+        st.caption(f"Historical test, generated {ev['generated'][:10]}: each season {ev['seasons'][0]}–{ev['seasons'][-1]} "
+                   "is forecast by a model trained only on earlier seasons, using only games before each forecast.")
+        st.markdown("**DK points — average miss per player-game (lower is better)**")
         pl = pd.DataFrame(ev["players"])
-        st.dataframe(pl[pl.season.astype(str) == "all"][["pos", "n", "mae_model", "mae_ewm", "mae_naive", "bias_model"]],
-                     hide_index=True)
-        st.markdown("**Decision test — average actual points of each week's top-N picks**")
-        st.dataframe(pd.DataFrame(ev["picks"]), hide_index=True)
-        st.markdown("**Props — stat forecasts and probability quality** (lines here are baseline-derived, not sportsbook)")
-        st.dataframe(pd.DataFrame(ev["props"]).drop(columns=["calibration"], errors="ignore"), hide_index=True)
-        st.markdown("**DST**")
-        st.dataframe(pd.DataFrame(ev["dst"]), hide_index=True)
+        t, _ = tidy(pl[pl.season.astype(str) == "all"], {"pos": "Pos", "n": "Player-games", "mae_model": "Model",
+                    "mae_ewm": "Recent form", "mae_naive": "Season average", "bias_model": "Model bias"},
+                    ints=("Player-games",), two=("Model", "Recent form", "Season average", "Model bias"))
+        show(t)
+        st.markdown("**Decision test — each week's top-N picks by method, average actual DK points**")
+        t, _ = tidy(pd.DataFrame(ev["picks"]), {"pos": "Pos", "top_n": "Top N", "weeks": "Weeks", "avg_pts_model": "Model picks",
+                    "avg_pts_naive": "Season-avg picks", "avg_pts_ewm": "Recent-form picks", "avg_pts_oracle": "Perfect hindsight",
+                    "model_beats_naive_weeks": "Model better in"},
+                    ints=("Top N", "Weeks"), one=("Model picks", "Season-avg picks", "Recent-form picks", "Perfect hindsight"))
+        t["Model better in"] = t["Model better in"].astype(str) + " of weeks"
+        show(t)
+        st.markdown("**Prop stats** — lines in this test come from recent form, not sportsbooks; real lines are graded as you use Props")
+        pr = pd.DataFrame(ev["props"])
+        td = pr[pr.stat == "any_td"]
+        pr = pr[pr.stat != "any_td"].assign(stat=lambda d: d.stat.map(lambda x: {"pass_yds": "Pass yds", "pass_att": "Pass att",
+                 "pass_cmp": "Completions", "rush_yds": "Rush yds", "rush_att": "Rush att", "rec": "Receptions", "rec_yds": "Rec yds"}.get(x, x)))
+        t, _ = tidy(pr, {"stat": "Stat", "n": "Games", "mae_model": "Miss: model", "mae_baseline": "Miss: recent form",
+                    "brier_model": "Prob. score: model", "brier_coinflip": "Prob. score: 50/50", "confident_hit_rate": "Confident calls right"},
+                    ints=("Games",), two=("Miss: model", "Miss: recent form"), pct=("Confident calls right",))
+        t.attrs["fmts"].update({"Prob. score: model": "%.3f", "Prob. score: 50/50": "%.3f"})
+        show(t)
+        if len(td):
+            st.caption(f"Anytime TD probability score: model {td.brier_model.iloc[0]:.3f} vs recent-form {td.brier_baseline.iloc[0]:.3f} "
+                       "(lower is better). Probability score = Brier score.")
+        st.markdown("**Defenses (DST)**")
+        t, _ = tidy(pd.DataFrame(ev["dst"]), {"season": "Season", "n": "Games", "mae_model": "Miss: model", "mae_ewm": "Miss: recent form",
+                    "rank_corr_model": "Ranking accuracy: model", "rank_corr_ewm": "Ranking accuracy: recent form"},
+                    two=("Miss: model", "Miss: recent form", "Ranking accuracy: model", "Ranking accuracy: recent form"))
+        t["Season"] = t["Season"].astype(str)
+        show(t)
         g = ev["games"]
-        st.markdown(f"**Games vs closing line** ({g['seasons']}, {g['n_games']} games; break-even at -110 = 52.4%)")
+        st.markdown(f"**Games vs closing line** — {g['n_games']:,} games, {g['seasons']}. Break-even at -110 odds is 52.4%.")
         c1, c2 = st.columns(2)
-        c1.dataframe(pd.DataFrame(g["ats"]), hide_index=True)
-        c2.dataframe(pd.DataFrame(g["totals"]), hide_index=True)
-        st.caption(f"Margin MAE: {g['mae_margin']} · Total MAE: {g['mae_total']}")
+        for col, key, lab in ((c1, "ats", "Spread"), (c2, "totals", "Total")):
+            t = pd.DataFrame(g[key]).assign(edge=lambda d: d.edge_pts.map(lambda x: f"{x}+ pts"))
+            t, _ = tidy(t, {"edge": f"{lab}: model differs by", "n": "Games", "win_rate": "Model side won"}, ints=("Games",),
+                        pct=("Model side won",))
+            with col:
+                show(t)
+        st.caption(f"Average miss on the final margin: market {g['mae_margin']['spread_line']:.2f}, model "
+                   f"{g['mae_margin']['model_spread']:.2f} points. On the total: market {g['mae_total']['total_line']:.2f}, "
+                   f"model {g['mae_total']['model_total']:.2f}. The market is more accurate.")
     sc = sorted(glob.glob(str(_H / "evidence" / "sleeper_compare_*.json")))
     if sc:
         c = json.loads(Path(sc[-1]).read_text())
@@ -509,11 +622,12 @@ with tab_evidence:
     else:
         st.caption("Run `python -m beatnfl backtest --sleeper` on your computer to test Sleeper's published projections "
                    "against the model and pick blend weights from evidence.")
-    mab = Path(__file__).resolve().parent / "evidence" / "matchup_ab_test.json"
+    mab = APP_ROOT / "evidence" / "matchup_ab_test.json"
     if mab.exists():
         m = json.loads(mab.read_text())
         st.markdown(f"**Matchup stats as model inputs** — {m['verdict']}")
-        st.dataframe(pd.DataFrame(m["rows"]), hide_index=True)
+        t = pd.DataFrame(m["rows"]).assign(Season=lambda d: d.Season.astype(str))
+        st.dataframe(t, hide_index=True)
     st.subheader("Live grading (true pregame forecasts)")
     if st.button("Grade frozen forecasts"):
         from beatnfl import backtest, research
@@ -548,9 +662,16 @@ with tab_status:
         lines_out = []
         doctor.run(lines_out.append)
         st.code("\n".join(lines_out))
+    st.caption(f"Data folder: `{HOME}` · Drop DKSalaries.csv or projection CSVs in `{INBOX}` · Exports: `{EXPORTS}`")
     stt = storage.data_status()
-    st.dataframe(stt if not stt.empty else pd.DataFrame({"note": ["No runs yet."]}), hide_index=True,
-                 width="stretch")
+    if stt.empty:
+        st.info("No runs yet — press Run on the This week tab.")
+    else:
+        stt = stt.assign(When=pd.to_datetime(stt.last_attempt_utc, utc=True).dt.tz_convert("America/New_York").dt.strftime("%a %-I:%M %p"),
+                         Result=stt.status.map({"ok": "✅ ok", "warn": "⚠️ check", "skip": "⏭️ skipped", "fail": "❌ failed",
+                                                "failed": "❌ failed"}).fillna(stt.status))
+        st.dataframe(stt.rename(columns={"source": "Step", "message": "Last message"})[["Step", "Result", "When", "Last message"]],
+                     hide_index=True, width="stretch")
     if LOG_PATH.exists():
         with st.expander("Technical log (last 60 lines)"):
             st.code("\n".join(LOG_PATH.read_text().splitlines()[-60:]))

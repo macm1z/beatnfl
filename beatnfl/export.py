@@ -79,7 +79,8 @@ def lineup_table(lineups: list[list[str]], pool: pd.DataFrame) -> pd.DataFrame:
         row["Salary"] = int(r.salary.sum())
         row["Proj"] = round(float(r.proj.sum()), 1)
         out.append(row)
-    return pd.DataFrame(out)
+    df = pd.DataFrame(out)
+    return df[["#", "Proj", "Salary"] + [c for c in df.columns if c not in ("#", "Proj", "Salary")]]
 
 
 def exposure(lineups: list[list[str]], pool: pd.DataFrame) -> pd.DataFrame:

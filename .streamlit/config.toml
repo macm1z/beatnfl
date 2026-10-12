@@ -2,6 +2,8 @@
 gatherUsageStats = false
 [server]
 headless = false
+[client]
+toolbarMode = "minimal"
 [theme]
 base = "dark"
 primaryColor = "#3FB950"

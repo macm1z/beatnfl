@@ -211,7 +211,7 @@ def run_week(settings: Settings | None = None, *, salary_file: Path | bytes | No
             pf, name = pf.read_bytes(), pf.name
         if pf is None:
             run.add("4b. Paid projections", "skip", "No paid projection file in the inbox.",
-                    f"Export DK projections as CSV from your subscription and drop it in {INBOX}.")
+                    "Paste your projections table into the box above Run, or drop a projections CSV in your BeatNFL/inbox folder.")
         else:
             pj, mapping = paidcsv.parse(pf, name)
             m, n = projections.match_external(pool, pj, "proj_paid")
