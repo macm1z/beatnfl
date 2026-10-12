@@ -162,7 +162,7 @@ def parse_draftables(payload: dict) -> tuple[pd.DataFrame, list[str]]:
                      "Export IDs stay 'unverified' until compared with the official CSV.")
     df = df.sort_values(["player_id", "slot_id"]).drop_duplicates("player_id", keep="first")
     df["key"] = [match_key(n, p, t) for n, p, t in zip(df.name, df.pos, df.team)]
-    return df.drop(columns=["player_id", "slot_id"]), warns
+    return df.drop(columns=["player_id", "slot_id"]).reset_index(drop=True), warns
 
 
 # ---------------------------------------------------------------- official CSV

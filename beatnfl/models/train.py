@@ -93,6 +93,33 @@ def locate_week(slate: pd.DataFrame, sched: pd.DataFrame) -> tuple[int, int, pd.
     return season, week, games
 
 
+def identify(sl: pd.DataFrame, sleeper_players: pd.DataFrame | None, hist: pd.DataFrame) -> list:
+    """Map slate rows (name/pos/team/key) to nflverse player_ids.
+    Order: Sleeper's gsis_id by exact key → Sleeper by name+position (team changed) → nflverse name/team/pos →
+    nflverse name/pos. Only unambiguous matches are used."""
+    gsis = pd.Series([None] * len(sl), index=sl.index, dtype=object)
+    if sleeper_players is not None and not sleeper_players.empty and "gsis_id" in sleeper_players:
+        sp = sleeper_players.dropna(subset=["gsis_id"])
+        by_key = sp.drop_duplicates("key", keep=False).set_index("key").gsis_id
+        by_lk = sp.drop_duplicates("lkey", keep=False).set_index("lkey").gsis_id
+        for i, r in sl.iterrows():
+            g = by_key.get(r.key)
+            if g is None:
+                g = by_lk.get(loose_key(r["name"], r.pos))
+            gsis.at[i] = g
+    latest = hist.sort_values(["season", "week"]).drop_duplicates("player_id", keep="last")
+    latest = latest.assign(key=[match_key(n, p, t) for n, p, t in zip(latest.name, latest.position, latest.team)],
+                           lk=[loose_key(n, p) for n, p in zip(latest.name, latest.position)])
+    by_key2 = latest.drop_duplicates("key", keep=False).set_index("key").player_id
+    by_lk2 = latest.drop_duplicates("lk", keep=False).set_index("lk").player_id
+    known = set(hist.player_id)
+    out = []
+    for i, r in sl.iterrows():
+        g = gsis.at[i] if isinstance(gsis.at[i], str) and gsis.at[i] in known else None
+        out.append(g or by_key2.get(r.key) or by_lk2.get(loose_key(r["name"], r.pos)))
+    return out
+
+
 def forecast(slate: pd.DataFrame, sleeper_players: pd.DataFrame | None, pm: PlayerModel, dm,
              lines: pd.DataFrame | None = None, offline=False) -> tuple[pd.DataFrame, list[str], dict]:
     """In-house model forecast for every slate player. Returns (df[dk_id, proj_model, model stats…], warnings, info)."""
@@ -110,28 +137,7 @@ def forecast(slate: pd.DataFrame, sleeper_players: pd.DataFrame | None, pm: Play
 
     # identity: slate → nflverse player_id (via Sleeper gsis_id, else name/team/pos)
     sl = slate[slate.pos != "DST"].copy()
-    if sleeper_players is not None and not sleeper_players.empty:
-        sp = sleeper_players.dropna(subset=["gsis_id"]).drop_duplicates("key")
-        sl = sl.merge(sp[["key", "gsis_id"]], on="key", how="left")
-        miss = sl.gsis_id.isna()
-        if miss.any():
-            sp2 = sleeper_players.dropna(subset=["gsis_id"]).assign(lk=lambda d: d.lkey).drop_duplicates("lk", keep=False)
-            sl.loc[miss, "gsis_id"] = sl.loc[miss].assign(lk=[loose_key(n, p) for n, p in zip(sl.loc[miss, "name"], sl.loc[miss, "pos"])]).merge(
-                sp2[["lk", "gsis_id"]], on="lk", how="left")["gsis_id"].values
-    else:
-        sl["gsis_id"] = np.nan
-    latest = hist.sort_values(["season", "week"]).drop_duplicates("player_id", keep="last")
-    latest["key"] = [match_key(n, p, t) for n, p, t in zip(latest.name, latest.position, latest.team)]
-    latest["lk"] = [loose_key(n, p) for n, p in zip(latest.name, latest.position)]
-    by_key = latest.drop_duplicates("key", keep=False).set_index("key").player_id
-    by_lk = latest.drop_duplicates("lk", keep=False).set_index("lk").player_id
-    known = set(hist.player_id)
-    pid = []
-    for r in sl.itertuples():
-        g = r.gsis_id if isinstance(r.gsis_id, str) and r.gsis_id in known else None
-        g = g or by_key.get(r.key) or by_lk.get(loose_key(r.name, r.pos))
-        pid.append(g)
-    sl["player_id"] = pid
+    sl["player_id"] = identify(sl, sleeper_players, hist)
     unmatched = sl.player_id.isna().sum()
     if unmatched:
         warns.append(f"{int(unmatched)} slate players have no NFL game history (rookies/new signings) — "

@@ -444,3 +444,33 @@ def test_team_matchup_priors_use_only_earlier_games():
     assert a.loc[a.week == 1, "e_off_epa"].isna().all()           # nothing known before week 1
     assert a.loc[a.week == 6, "e_off_epa"].iloc[0] < 6            # week 6 prior excludes week 6
     pd.testing.assert_frame_equal(a, b)                            # changing week 6 results changes no prior
+
+
+def test_identity_with_sleeper_including_team_changes():
+    from beatnfl.models.train import identify
+    from beatnfl.names import loose_key, match_key
+    hist = pd.DataFrame({"player_id": ["00-1", "00-2", "00-3", "00-4"], "name": ["Josh Allen", "Davante Adams", "Rookie Guy", "Same Name"],
+                         "position": ["QB", "WR", "RB", "WR"], "team": ["BUF", "NYJ", "KC", "DAL"], "season": 2026, "week": 5})
+    sl = pd.DataFrame({"name": ["Josh Allen", "Davante Adams", "Nobody Here", "Same Name"], "pos": ["QB", "WR", "RB", "WR"],
+                       "team": ["BUF", "LA", "NE", "DAL"]})
+    sl["key"] = [match_key(n, p, t) for n, p, t in zip(sl.name, sl.pos, sl.team)]
+    sp = pd.DataFrame({"name": ["Josh Allen", "Davante Adams", "Other"], "pos": ["QB", "WR", "TE"], "team": ["BUF", "LV", "SF"],
+                       "gsis_id": ["00-1", "00-2", None]})  # Sleeper still lists Adams on his old team
+    sp["key"] = [match_key(n, p, t) for n, p, t in zip(sp.name, sp.pos, sp.team)]
+    sp["lkey"] = [loose_key(n, p) for n, p in zip(sp.name, sp.pos)]
+    assert identify(sl, sp, hist) == ["00-1", "00-2", None, "00-4"]
+    assert identify(sl, None, hist) == ["00-1", "00-2", None, "00-4"]   # works without Sleeper too
+    assert identify(sl, sp.drop(columns="gsis_id"), hist) == ["00-1", "00-2", None, "00-4"]
+
+
+def test_status_merge_with_unordered_index():
+    """JSON-route slates arrive with a non-contiguous index; injury merges must not misalign."""
+    ls = dk.load_from_file(SAL)
+    shuffled = ls.players.sample(frac=1, random_state=3)  # index out of order, like a sorted/deduped feed
+    sp = shuffled.head(5).assign(injury="O", injury_raw="Out", injury_body="", depth_order=1, depth_pos="", news_utc=None,
+                                 team=lambda d: d.team.where(d.pos == "DST", "NYJ"))  # force the name-only path
+    sp["lkey"] = [__import__("beatnfl.names", fromlist=["x"]).loose_key(n, p) for n, p in zip(sp.name, sp.pos)]
+    sp["key"] = "nomatch|" + sp.dk_id
+    out = projections.attach_status(shuffled, sp)
+    hit = out[out.dk_id.isin(sp.dk_id)]
+    assert hit.out.all() and out.out.sum() == 5

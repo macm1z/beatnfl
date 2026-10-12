@@ -20,7 +20,7 @@ DK_STATUS = {"NONE": "", "": "", "Q": "Q", "D": "D", "O": "O", "OUT": "O", "IR":
 
 
 def attach_status(slate: pd.DataFrame, sleeper: pd.DataFrame | None) -> pd.DataFrame:
-    s = slate.copy()
+    s = slate.reset_index(drop=True).copy()
     s["status_dk"] = s.dk_status.map(lambda v: DK_STATUS.get(str(v).strip().upper(), ""))
     s["status_sleeper"], s["injury_note"], s["depth"] = "", "", np.nan
     if sleeper is not None and not sleeper.empty:
@@ -47,7 +47,7 @@ def attach_status(slate: pd.DataFrame, sleeper: pd.DataFrame | None) -> pd.DataF
 
 def blend(pool: pd.DataFrame, settings, sources: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """sources: name -> df with dk_id + proj_<name> (already matched to the slate)."""
-    p = pool.copy()
+    p = pool.reset_index(drop=True).copy()
     for name, df in sources.items():
         col = f"proj_{name}"
         if df is None or df.empty or col not in df:
@@ -100,8 +100,8 @@ def match_external(pool: pd.DataFrame, ext: pd.DataFrame, col: str) -> tuple[pd.
 def attach_external_status(pool: pd.DataFrame, ext: pd.DataFrame, label: str) -> tuple[pd.DataFrame, int]:
     """Merge another source's injury tags (name/pos/team, then name/pos). Worst status wins."""
     from .names import match_key
-    p = pool.copy()
-    e = ext.copy()
+    p = pool.reset_index(drop=True).copy()
+    e = ext.reset_index(drop=True).copy()
     e["key"] = [match_key(n, ps, t) for n, ps, t in zip(e.name, e.pos, e.team)]
     e["lkey"] = [loose_key(n, ps) for n, ps in zip(e.name, e.pos)]
     by_key = e.drop_duplicates("key").set_index("key")
