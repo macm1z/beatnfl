@@ -548,9 +548,11 @@ with tab_research:
                 st.info("No props match these filters.")
             else:
                 st.dataframe(view, hide_index=True, width="stretch", height=min(700, 38 + 35 * len(view)))
-            st.caption("**Model %** = model's chance of the Over (or Yes). **Book %** = the book's chance with its margin "
-                       "removed; Anytime TD is quoted on one side only, so its Book % still includes the margin and runs "
-                       "high. **Lean** shows where the model differs by 4+ points; ★ = 8+ points. Information only.")
+            st.caption("**Model median** = the model's most likely result, corrected for how its past forecasts missed. "
+                       "**Model %** = its chance of the Over (or Yes). **Book %** = the book's chance with its margin removed. "
+                       "\\* Anytime TD is quoted on one side only, so its Book % still includes the margin and runs high. "
+                       "**Lean** = model differs by 4+ points (★ = 8+). **no forecast** = player ruled out or too little history. "
+                       "Information only.")
 
 # ------------------------------------------------------------------ EVIDENCE
 with tab_evidence:

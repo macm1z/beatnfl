@@ -493,7 +493,7 @@ def test_props_view_readable_consensus_and_filters():
     dl = v[v.Player == "Drake London"].iloc[0]
     assert dl.Prop == "Rec yds 74.5" and dl.Book == "3 books" and dl["Model %"] == "63%" and dl.Lean == "Over ★"
     db = v[v.Player == "Denzel Boston"].iloc[0]
-    assert db.Lean == "—" and "incl. margin" in db["Book %"]   # TD 'No' leans are not shown (mostly book margin)
+    assert db.Lean == "—" and db["Book %"].endswith("*")   # TD 'No' leans are not shown (mostly book margin)
     assert v[v.Player == "Chris Moore"].iloc[0].Lean == "Yes ★"
     g = research.props_view(b, game="BAL @ CLE", book="Fanatics")
     assert list(g.Player) == ["Denzel Boston"] and g.iloc[0].Odds == "+175"

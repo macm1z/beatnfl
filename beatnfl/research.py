@@ -105,13 +105,16 @@ def props_board(key: str, season: int, week: int, fc: pd.DataFrame, pm, markets=
                         for o, u in zip(b.price, b.under_price)]
     b["model_p_over"] = [pm.prob_over(s, pr, ln) if s != "any_td" else pr
                          for s, pr, ln in zip(b.stat, b.model_pred, b.line)]
+    # the most likely outcome after correcting the forecast with its past errors — agrees with Model %
+    b["model_median"] = [(pm.quantiles(s, pr, (0.5,))[0] if s != "any_td" and pd.notna(pr) else np.nan)
+                         for s, pr in zip(b.stat, b.model_pred)]
     if not yes.empty and "player_anytime_td" in markets:
         y = yes.assign(book_p_over=yes.price.map(odds.implied_prob), model_p_over=yes.model_pred, line=0.5, under_price=np.nan)
         b = pd.concat([b[b.market != "player_anytime_td"], y], ignore_index=True)
     b["edge"] = (b.model_p_over - b.book_p_over).round(3)
     b["model_lean"] = np.where(b.edge > 0, "Over", np.where(b.edge < 0, "Under", ""))
     storage.save_quotes(b.rename(columns={}), "prop", season, week, model_version=getattr(pm, "version", ""))
-    cols = ["game", "player", "stat", "book", "line", "price", "under_price", "model_pred", "book_p_over",
+    cols = ["game", "player", "stat", "book", "line", "price", "under_price", "model_pred", "model_median", "book_p_over",
             "model_p_over", "edge", "model_lean", "source_ts"]
     return b[cols].sort_values(["game", "player", "stat", "book"]).reset_index(drop=True), info
 
@@ -214,6 +217,8 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
     if b is None or b.empty:
         return pd.DataFrame()
     d = b.copy()
+    if "model_median" not in d:
+        d["model_median"] = d.model_pred.where(d.stat != "any_td")
     if game and game != "All games":
         d = d[d.game == game]
     d["Book"] = d.book.map(book_name)
@@ -225,6 +230,7 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
     if book == CONSENSUS:
         g = d.groupby(["game", "player", "stat"], as_index=False).agg(
             line=("line", "median"), price=("price", "median"), model_pred=("model_pred", "first"),
+            model_median=("model_median", "first"),
             model_p_over=("model_p_over", "first"), book_p_over=("book_p_over", "median"), books=("book", "nunique"))
         g["Book"] = g.books.map(lambda n: f"{n} book" + ("s" if n != 1 else ""))
         d, td = g, g.stat == "any_td"
@@ -233,7 +239,7 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
 
     def label(i):
         if pd.isna(diff[i]):
-            return "not forecast (out or new)"
+            return "no forecast"
         if td[i]:
             return ("Yes ★" if diff[i] >= 8 else "Yes") if diff[i] >= 4 else "—"
         if not lean[i]:
@@ -246,9 +252,10 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
         "Prop": [("Anytime TD" if s == "any_td" else f"{STAT_NAMES.get(s, s)} {l:g}") for s, l in zip(d.stat, d.line)],
         "Book": d.Book.values,
         "Odds": [_odds(p) for p in d.price],
-        "Model": [("" if s == "any_td" or pd.isna(m) else f"{m:.1f}") for s, m in zip(d.stat, d.model_pred)],
+        "Model median": [("" if s == "any_td" or pd.isna(m) else f"{m:.1f}") for s, m in
+                         zip(d.stat, d.model_median if "model_median" in d else d.model_pred)],
         "Model %": [("" if pd.isna(p) else f"{p * 100:.0f}%") for p in d.model_p_over],
-        "Book %": [("" if pd.isna(p) else f"{p * 100:.0f}%" + (" (incl. margin)" if s == "any_td" else ""))
+        "Book %": [("" if pd.isna(p) else f"{p * 100:.0f}%" + ("*" if s == "any_td" else ""))
                    for p, s in zip(d.book_p_over, d.stat)],
         "Lean": [label(i) for i in d.index],
         "_diff": diff.abs().values, "_book": d.Book.values,
