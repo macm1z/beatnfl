@@ -361,6 +361,21 @@ with tab_research:
     except StepError as e:
         st.error(e.as_text())
 
+    st.subheader("Matchups")
+    st.caption("Team efficiency from free NFL play-by-play: offense vs the opponent's defense, recent games weighted "
+               "more. Pass/Run edge = offense EPA per play + opponent's EPA allowed (higher favors the offense). "
+               "Tested as model inputs, these didn't improve forecasts beyond what betting lines already carry (see "
+               "Evidence), so they're shown for reading, not fed into projections.")
+    if st.button("Load matchups"):
+        with st.spinner("Reading play-by-play (first time downloads ~20 MB per season)…"):
+            try:
+                from beatnfl import research as _r
+                ss["mu"] = _r.matchups(int(season), int(week), offline=offline)
+            except StepError as e:
+                st.error(e.as_text())
+    if ss.get("mu") is not None:
+        st.dataframe(ss["mu"].sort_values("Pass edge", ascending=False), hide_index=True, width="stretch")
+
     st.subheader("Player forecasts & props")
     if st.button("Forecast every player this week"):
         with st.spinner("Forecasting…"):
@@ -462,6 +477,11 @@ with tab_evidence:
     else:
         st.caption("Run `python -m beatnfl backtest --sleeper` on your computer to test Sleeper's published projections "
                    "against the model and pick blend weights from evidence.")
+    mab = Path(__file__).resolve().parent / "evidence" / "matchup_ab_test.json"
+    if mab.exists():
+        m = json.loads(mab.read_text())
+        st.markdown(f"**Matchup stats as model inputs** — {m['verdict']}")
+        st.dataframe(pd.DataFrame(m["rows"]), hide_index=True)
     st.subheader("Live grading (true pregame forecasts)")
     if st.button("Grade frozen forecasts"):
         from beatnfl import backtest, research

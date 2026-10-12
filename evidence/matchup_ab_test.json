@@ -1,0 +1,8 @@
+{"generated": "2026-10-12", "label": "retrospective A/B test, same seasons and splits as the main backtest",
+ "verdict": "not used. Adding play-by-play team efficiency made DK-point forecasts slightly worse in 4 of 5 seasons; betting-line implied totals already carry that information.",
+ "rows": [
+  {"Season": 2022, "Model error": 4.709, "With all 18 matchup stats": 4.726, "With 4 strongest": 4.721},
+  {"Season": 2023, "Model error": 4.566, "With all 18 matchup stats": 4.584, "With 4 strongest": 4.570},
+  {"Season": 2024, "Model error": 4.635, "With all 18 matchup stats": 4.637, "With 4 strongest": 4.637},
+  {"Season": 2025, "Model error": 4.485, "With all 18 matchup stats": 4.509, "With 4 strongest": 4.502},
+  {"Season": 2026, "Model error": 4.627, "With all 18 matchup stats": 4.664, "With 4 strongest": 4.624}]}

@@ -427,3 +427,20 @@ def test_self_update_installs_and_rolls_back(tmp_path, monkeypatch):
     with pytest.raises(StepError):
         update.apply("owner/beatnfl")
     assert not (app / "beatnfl" / "NEW_MARKER.txt").exists() and update.installed() == "old"
+
+
+def test_team_matchup_priors_use_only_earlier_games():
+    from beatnfl.models.features import team_metric_priors, OFF_M, DEF_M
+    rows = []
+    for w in range(1, 7):
+        r = {"team": "AAA", "season": 2026, "week": w, "off_rz_tds": 1, "off_rz_trips": 2, "def_rz_tds": 1, "def_rz_trips": 2}
+        r.update({c: float(w) for c in OFF_M + DEF_M})
+        rows.append(r)
+    tm = pd.DataFrame(rows)
+    a = team_metric_priors(tm)
+    tm2 = tm.copy()
+    tm2.loc[tm2.week == 6, OFF_M] = 999.0
+    b = team_metric_priors(tm2)
+    assert a.loc[a.week == 1, "e_off_epa"].isna().all()           # nothing known before week 1
+    assert a.loc[a.week == 6, "e_off_epa"].iloc[0] < 6            # week 6 prior excludes week 6
+    pd.testing.assert_frame_equal(a, b)                            # changing week 6 results changes no prior

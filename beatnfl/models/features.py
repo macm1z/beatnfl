@@ -46,7 +46,7 @@ def _ewm_prior(df: pd.DataFrame, by: str, cols: list[str], half=HALF, prefix="e_
     return e
 
 
-def build(rows: pd.DataFrame, tg: pd.DataFrame) -> pd.DataFrame:
+def build(rows: pd.DataFrame, tg: pd.DataFrame, tm: pd.DataFrame | None = None) -> pd.DataFrame:
     """rows: tidy player-games (historical, played) plus optional future rows with NaN outcomes
     and played=1 for expected-active players. tg: team_games() table (needs rows for future games).
     Returns one feature row per input row."""
@@ -119,6 +119,8 @@ def build(rows: pd.DataFrame, tg: pd.DataFrame) -> pd.DataFrame:
     df["x_rush"] = df.e_rush_share * df.e_t_rush_att * (1 + 0.012 * df.spread.fillna(0)) * (1 + df.vac_rush.clip(0, 0.7) * 0.8)
     df["implied_ratio"] = df.implied / df.e_t_pf
     df["pos_code"] = df.position.map({"QB": 0, "RB": 1, "WR": 2, "TE": 3})
+    if tm is not None and not tm.empty:
+        df = add_team_metrics(df, tm)
     return df
 
 
@@ -164,3 +166,37 @@ FEATURES = ["pos_code", "e_dk_pts", "e_dk_long", "dk_max8", "dk_sd8", "std_mean"
             "e_adot", "e_any_td", "vac_tgt", "vac_rush", "spread", "total", "implied", "home", "e_t_pass_att",
             "e_t_rush_att", "e_t_pf", "e_t_dk", "e_ypa_allowed", "e_ypc_allowed", "e_pts_allowed", "dvp", "x_tgt",
             "x_rush", "implied_ratio"]
+
+
+# ------------------------------------------------------------------ play-by-play matchup features
+OFF_M = ["off_epa", "off_sr", "off_pass_epa", "off_rush_epa", "off_explosive", "off_neutral_pass", "off_proe",
+         "off_sack_rate", "off_to_rate", "off_plays"]
+DEF_M = ["def_epa", "def_sr", "def_pass_epa", "def_rush_epa", "def_explosive", "def_sack_rate", "def_to_rate"]
+PBP_FEATURES = [f"t_{c}" for c in OFF_M] + ["t_rz_td", "o_rz_td"] + [f"o_{c}" for c in DEF_M]
+
+
+def team_metric_priors(tm: pd.DataFrame, half: float = 6) -> pd.DataFrame:
+    """Prior-only EWM of each team's efficiency (one row per team-game, chronological)."""
+    t = tm.sort_values(["season", "week"]).reset_index(drop=True).copy()
+    t["off_rz_rate"] = t.off_rz_tds / t.off_rz_trips.replace(0, np.nan)
+    t["def_rz_rate"] = t.def_rz_tds / t.def_rz_trips.replace(0, np.nan)
+    cols = OFF_M + DEF_M + ["off_rz_rate", "def_rz_rate"]
+    e = _ewm_prior(t, "team", cols, half=half, prefix="e_")
+    return pd.concat([t[["team", "season", "week"]], e], axis=1)
+
+
+def add_team_metrics(df: pd.DataFrame, tm: pd.DataFrame) -> pd.DataFrame:
+    """Join the player's team offense and the opponent's defense (priors) onto each row.
+    Future weeks (no game played yet) get the latest prior via an extra row per team-week."""
+    keys = df[["team", "season", "week"]].drop_duplicates()
+    base = tm[["team", "season", "week"]]
+    missing = keys.merge(base, how="left", indicator=True).query('_merge == "left_only"').drop(columns="_merge")
+    t = pd.concat([tm, missing], ignore_index=True)  # NaN outcomes for future weeks → priors only
+    pr = team_metric_priors(t)
+    off = pr[["team", "season", "week"] + [f"e_{c}" for c in OFF_M] + ["e_off_rz_rate"]].rename(
+        columns={**{f"e_{c}": f"t_{c}" for c in OFF_M}, "e_off_rz_rate": "t_rz_td"})
+    de = pr[["team", "season", "week"] + [f"e_{c}" for c in DEF_M] + ["e_def_rz_rate"]].rename(
+        columns={**{f"e_{c}": f"o_{c}" for c in DEF_M}, "e_def_rz_rate": "o_rz_td", "team": "opp"})
+    df = df.merge(off, on=["team", "season", "week"], how="left")
+    df = df.merge(de, on=["opp", "season", "week"], how="left")
+    return df

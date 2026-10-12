@@ -101,6 +101,7 @@ Retrospective test: each season 2022–2026 is forecast by a model trained only 
 Other results:
 - **DST:** the model ranks defenses with about twice the rank correlation of recent form (0.18–0.34 vs 0.10–0.17).
 - **Prop stats:** the model beats the recent-form baseline on every stat, and its probabilities are calibrated. This test used baseline-derived lines, not real sportsbook lines, so it is not evidence of beating a book. The app saves every real line it pulls and grades those prospectively (`python -m beatnfl grade`).
+- **Matchup stats:** team efficiency per play, success rate, pass rate over expected, explosive plays and red zone, all from free play-by-play. They're shown in Research. As model inputs they made forecasts slightly worse (4 of 5 seasons), so the model doesn't use them; see `evidence/matchup_ab_test.json`.
 - **Games:** the model does **not** beat closing lines. Margin error is 10.18 for the model vs 9.81 for the market. Against the spread it wins 49.8–51.9%, below the 52.4% break-even. Treat game-model numbers as context only.
 
 Two checks only run on your computer, because their sources were blocked from the build machine:

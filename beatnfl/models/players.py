@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 
-from .features import FEATURES
+from .features import FEATURES, PBP_FEATURES
 
 MODEL_VERSION = "pm-1.2"
 
@@ -38,16 +38,25 @@ class PlayerModel:
     resid: dict = field(default_factory=dict)  # target -> (bucket_edges, list[np.ndarray residuals])
     calib: dict = field(default_factory=dict)  # target -> (a, b) logistic recalibration of P(over)
     trained_through: str = ""
+    features: list = field(default_factory=lambda: list(FEATURES))
+    use_pbp: bool = False
     version: str = MODEL_VERSION
 
     def fit(self, feat: pd.DataFrame) -> "PlayerModel":
+        # Play-by-play matchup features are opt-in: tested 2022–2026 they made forecasts slightly worse
+        # (betting-line implied totals already carry that information). See evidence/matchup_ab_test.json.
+        if getattr(self, "use_pbp", False) and all(c in feat for c in PBP_FEATURES):
+            self.features = list(FEATURES) + list(PBP_FEATURES)
+        else:
+            self.features = list(FEATURES)
+        FEATURES_ = self.features
         f = feat[feat.n_prior >= 1]
         for t, poss in TARGETS.items():
             d = f[f.position.isin(poss) & f[t].notna()]
-            self.regs[t] = HistGradientBoostingRegressor(loss="squared_error", **GBM).fit(d[FEATURES], d[t])
+            self.regs[t] = HistGradientBoostingRegressor(loss="squared_error", **GBM).fit(d[FEATURES_], d[t])
         for t, poss in CLASS_TARGETS.items():
             d = f[f.position.isin(poss) & f[t].notna()]
-            self.clfs[t] = HistGradientBoostingClassifier(**GBM).fit(d[FEATURES], d[t].astype(int))
+            self.clfs[t] = HistGradientBoostingClassifier(**GBM).fit(d[FEATURES_], d[t].astype(int))
         last = f.sort_values(["season", "week"]).iloc[-1]
         self.trained_through = f"{int(last.season)} wk {int(last.week)}"
         return self
@@ -58,13 +67,20 @@ class PlayerModel:
             m = feat.position.isin(poss)
             out[f"p_{t}"] = np.nan
             if m.any():
-                out.loc[m, f"p_{t}"] = np.clip(self.regs[t].predict(feat.loc[m, FEATURES]), 0, None)
+                out.loc[m, f"p_{t}"] = np.clip(self.regs[t].predict(feat.loc[m, self._cols(feat)]), 0, None)
         for t, poss in CLASS_TARGETS.items():
             m = feat.position.isin(poss)
             out[f"p_{t}"] = np.nan
             if m.any():
-                out.loc[m, f"p_{t}"] = self.clfs[t].predict_proba(feat.loc[m, FEATURES])[:, 1]
+                out.loc[m, f"p_{t}"] = self.clfs[t].predict_proba(feat.loc[m, self._cols(feat)])[:, 1]
         return out
+
+    def _cols(self, feat: pd.DataFrame) -> list:
+        cols = getattr(self, "features", None) or list(FEATURES)
+        missing = [c for c in cols if c not in feat]
+        if missing:
+            raise ValueError(f"Model needs features that are missing: {missing[:5]}")
+        return cols
 
     # ---- uncertainty
     def set_residuals(self, preds: pd.DataFrame, actual: pd.DataFrame, n_buckets: int = 8) -> None:

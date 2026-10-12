@@ -148,3 +148,35 @@ def grade_props(offline=False) -> dict:
             "brier_book": round(float(((m.book_p - m.over) ** 2).mean()), 4),
             "lean_hit_rate": round(float(hit.mean()), 3),
             "note": "Book probability here is the single-side implied price (includes vig) when the opposite side was not stored."}
+
+
+def matchups(season: int, week: int, offline=False, progress=lambda m: None) -> pd.DataFrame:
+    """Team efficiency going into the week (prior games only, recent games weighted more),
+    offense vs the opponent's defense. From free NFL play-by-play (nflverse)."""
+    from .models.features import team_metric_priors
+    sched = nv.schedules(offline=offline)
+    wk = sched[(sched.season == season) & (sched.week == week) & (sched.game_type == "REG")]
+    if wk.empty:
+        raise StepError("Matchups", f"No games for {season} week {week}.", "", "Pick another week.")
+    tm = nv.team_metrics(range(season - 1, season + 1), offline=offline, progress=progress)
+    have = set(tm[(tm.season == season) & (tm.week == week)].team)
+    fut = pd.DataFrame([{"team": t, "season": season, "week": week}
+                        for t in (set(wk.home_team) | set(wk.away_team)) - have])
+    pr = team_metric_priors(pd.concat([tm, fut], ignore_index=True))
+    pr = pr[(pr.season == season) & (pr.week == week)].drop_duplicates("team").set_index("team")
+    rows = []
+    for g in wk.itertuples():
+        for t, o, side in ((g.away_team, g.home_team, "@"), (g.home_team, g.away_team, "vs")):
+            if t not in pr.index or o not in pr.index:
+                continue
+            a, d = pr.loc[t], pr.loc[o]
+            rows.append({
+                "Team": t, "Opp": f"{side} {o}",
+                "Off EPA/play": a.e_off_epa, "Opp def EPA allowed": d.e_def_epa,
+                "Pass edge": a.e_off_pass_epa + d.e_def_pass_epa, "Run edge": a.e_off_rush_epa + d.e_def_rush_epa,
+                "Success rate": a.e_off_sr, "Explosive %": a.e_off_explosive * 100,
+                "Pass rate over exp. %": a.e_off_proe, "Red zone TD %": a.e_off_rz_rate * 100,
+                "Sack rate %": a.e_off_sack_rate * 100, "Opp sack rate %": d.e_def_sack_rate * 100,
+                "Plays/game": a.e_off_plays,
+            })
+    return pd.DataFrame(rows).round(3)
