@@ -29,7 +29,9 @@ The installer does four things:
 
 Setup needs no admin rights, changes no system settings and adds nothing to startup. Prefer Homebrew? Run `brew install uv` first and setup skips the uv download.
 
-Then open the app with **Start BeatNFL.command** (or `.bat`). It opens in your browser.
+Setup also creates a **BeatNFL** app in your Applications folder. Open it from Launchpad or drag it to the Dock. It starts BeatNFL in the background (no Terminal window) and opens your browser; if it's already running, it just opens the page. To stop it, run `bash launch.sh stop` in the BeatNFL folder, or restart the Mac.
+
+You can also open the app with **Start BeatNFL.command** (or `.bat`). It opens in your browser.
 
 ## Each week
 

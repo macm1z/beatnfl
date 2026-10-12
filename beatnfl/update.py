@@ -26,7 +26,8 @@ from .errors import StepError
 APP_DIR = Path(__file__).resolve().parent.parent
 STAMP = APP_DIR / ".installed_commit"
 CODE = ["beatnfl", "app.py", "requirements.txt", "requirements.in", "README.md", "tests", "evidence", ".streamlit",
-        "Install BeatNFL.command", "Start BeatNFL.command", "Install BeatNFL.bat", "Start BeatNFL.bat"]
+        "Install BeatNFL.command", "Start BeatNFL.command", "Install BeatNFL.bat", "Start BeatNFL.bat", "launch.sh",
+        "make_mac_app.sh", ".gitignore"]
 STEP = "Update"
 
 
@@ -134,7 +135,7 @@ def apply(repo: str, token: str = "", progress=lambda m: None) -> dict:
             elif d.exists():
                 d.unlink()
             shutil.copytree(s, d) if s.is_dir() else shutil.copy2(s, d)
-        for f in ("Install BeatNFL.command", "Start BeatNFL.command"):
+        for f in ("Install BeatNFL.command", "Start BeatNFL.command", "launch.sh", "make_mac_app.sh"):
             if (APP_DIR / f).exists():
                 (APP_DIR / f).chmod(0o755)
         if req_changed:
@@ -155,10 +156,22 @@ def apply(repo: str, token: str = "", progress=lambda m: None) -> dict:
         restore()
         raise
     STAMP.write_text(info["sha"])
+    if sys.platform == "darwin" and (APP_DIR / "make_mac_app.sh").exists():
+        subprocess.run(["/bin/bash", str(APP_DIR / "make_mac_app.sh")], capture_output=True)  # refresh the Mac app icon
     shutil.rmtree(tmp, ignore_errors=True)
     return {**info, "changed": True, "packages_updated": req_changed,
-            "note": "Updated. Close the app (Ctrl+C in Terminal) and start it again to load the new version."}
+            "note": "Updated. Click Restart below (or quit and reopen BeatNFL) to load the new version."}
 
 
 if __name__ == "__main__":  # python -m beatnfl.update owner/name [token]
     print(json.dumps(apply(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "", print), indent=1))
+
+
+def restart() -> bool:
+    """Restart the background app so new code loads (macOS/Linux). Returns False where unsupported."""
+    if sys.platform.startswith("win") or not (APP_DIR / "launch.sh").exists():
+        return False
+    cmd = (f"sleep 1; pkill -f 'streamlit run.*app.py'; sleep 2; /bin/bash '{APP_DIR / 'launch.sh'}'")
+    subprocess.Popen(["/bin/bash", "-c", cmd], start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return True

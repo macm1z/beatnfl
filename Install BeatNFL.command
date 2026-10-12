@@ -20,4 +20,5 @@ echo; echo "== Self-test =="
 .venv/bin/python -m pytest -q tests
 echo; echo "== Checking data sources from this computer =="
 .venv/bin/python -m beatnfl doctor || true
-echo; echo "Setup complete. Double-click 'Start BeatNFL.command' to open the app."
+bash make_mac_app.sh || true
+echo; echo "Setup complete. Open BeatNFL from your Applications folder (or Launchpad) — drag it to the Dock to keep it handy."

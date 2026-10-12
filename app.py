@@ -81,10 +81,16 @@ with st.sidebar:
                             res = upd.apply(S.update_repo, S.github_token)
                             st.success(res["note"])
                             ss.pop("upd", None)
+                            ss["needs_restart"] = True
                         except StepError as e:
                             st.error(e.as_text())
             elif u:
                 st.success("You're on the latest version.")
+        if ss.get("needs_restart") and st.button("Restart BeatNFL"):
+            if upd.restart():
+                st.info("Restarting… the page reopens in a few seconds.")
+            else:
+                st.info("Close the BeatNFL window and start it again to load the update.")
     offline = st.toggle("Offline mode (use cached data only)", False)
     st.caption(f"Data folder: `{HOME}`\n\nInbox: `{INBOX}`")
 
