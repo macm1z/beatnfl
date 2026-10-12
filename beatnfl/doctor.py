@@ -50,9 +50,9 @@ def run(out=print) -> bool:
     res["sleeper"] = _check("Sleeper injuries & depth charts", sl_players, out)
 
     def sl_proj():
-        st = sleeper.state()
-        df, note = sleeper.projections(int(st["season"]), int(st["week"]))
-        return f"{len(df)} projections for {st['season']} week {st['week']}"
+        season, week = nv.upcoming_week(nv.schedules())  # same week the weekly run uses
+        df, note = sleeper.projections(season, week)
+        return f"{len(df)} projections for {season} week {week}"
     res["sleeper_proj"] = _check("Sleeper projections", sl_proj, out)
 
     def nfl():

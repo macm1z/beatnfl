@@ -52,7 +52,7 @@ class WeekRun:
         r = StepResult(*a, **k)
         self.steps.append(r)
         log.info(r.as_text().replace("\n", " "))
-        storage.log_status(r.step, r.status in ("ok", "warn", "skip"), r.message)
+        storage.log_status(r.step, r.status, r.message)
         return r
 
 

@@ -203,14 +203,17 @@ def quotes(kind: str | None = None) -> pd.DataFrame:
 
 
 # ------------------------------------------------------------- data status
-def log_status(source: str, ok: bool, message: str):
+def log_status(source: str, ok, message: str):
+    """ok: True/False, or a step status string ("ok", "warn", "skip", "fail")."""
+    status = ok if isinstance(ok, str) else ("ok" if ok else "failed")
+    ok = status in ("ok", "warn", "skip")
     t = now()
     with db() as c:
         c.execute("""INSERT INTO data_status(source,last_attempt_utc,last_ok_utc,status,message) VALUES(?,?,?,?,?)
                      ON CONFLICT(source) DO UPDATE SET last_attempt_utc=excluded.last_attempt_utc,
                      last_ok_utc=COALESCE(excluded.last_ok_utc, data_status.last_ok_utc),
                      status=excluded.status, message=excluded.message""",
-                  (source, t, t if ok else None, "ok" if ok else "failed", message))
+                  (source, t, t if ok else None, status, message))
 
 
 def data_status() -> pd.DataFrame:
