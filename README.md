@@ -2,6 +2,13 @@
 
 DraftKings NFL Classic lineups plus game and player-prop research, with historical tests that show whether the predictions help. It runs on your own computer. It is read-only: no bets, no sportsbook logins, no contest entry.
 
+## Updates
+
+In the app: **App updates** (sidebar) → **Check for updates** → **Install update**, then restart the app.
+- Code comes from github.com/macm1z/beatnfl.
+- Your data, keys and Python setup are kept.
+- If the new version fails its self-tests, the previous version is restored.
+
 ## Setup (once)
 
 **Mac:** unzip, then double-click **Install BeatNFL.command**. If macOS blocks it, right-click → Open → Open.

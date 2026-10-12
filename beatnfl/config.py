@@ -26,7 +26,7 @@ class Settings:
     odds_api_key: str = ""
     yahoo_client_id: str = ""
     yahoo_client_secret: str = ""
-    update_repo: str = ""        # GitHub "owner/name" the Update button pulls from
+    update_repo: str = "macm1z/beatnfl"  # GitHub "owner/name" the Update button pulls from
     github_token: str = ""       # only for a private repository (read-only token)
     # Projection blend weights; sources that are missing are dropped and the rest renormalised.
     w_paid: float = 0.50
