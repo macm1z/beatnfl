@@ -450,10 +450,23 @@ with tab_research:
                     st.error(e.as_text())
         b = ss.get("board")
         if b is not None and not b.empty:
-            me = st.slider("Show where |model − book| probability ≥", 0.0, 0.3, 0.05, 0.01)
-            st.dataframe(b[b.edge.abs() >= me], hide_index=True, width="stretch")
-            st.caption("book_p_over = no-vig probability from that book's over/under prices. Edges are model opinions; "
-                       "their record against real lines appears in Evidence as games finish.")
+            c1, c2, c3 = st.columns(3)
+            games = ["All games"] + sorted(b.game.unique())
+            pick_g = c1.selectbox("Game", games, key="props_game")
+            books = [research.CONSENSUS] + sorted({research.book_name(x) for x in b.book.unique()})
+            pick_b = c2.selectbox("Sportsbook", books, key="props_book")
+            pick_s = c3.selectbox("Sort by", ["Biggest difference", "Sportsbook", "Player"], key="props_sort")
+            only = st.toggle("Only show props where the model disagrees with the book", value=False, key="props_only")
+            view = research.props_view(b, pick_g, pick_b, pick_s)
+            if only and not view.empty:
+                view = view[view.Lean.str.contains("Over|Under|Yes")]
+            if view.empty:
+                st.info("No props match these filters.")
+            else:
+                st.dataframe(view, hide_index=True, width="stretch", height=min(700, 38 + 35 * len(view)))
+            st.caption("**Model %** = model's chance of the Over (or Yes). **Book %** = the book's chance with its margin "
+                       "removed; Anytime TD is quoted on one side only, so its Book % still includes the margin and runs "
+                       "high. **Lean** shows where the model differs by 4+ points; ★ = 8+ points. Information only.")
 
 # ------------------------------------------------------------------ EVIDENCE
 with tab_evidence:

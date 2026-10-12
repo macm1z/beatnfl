@@ -121,7 +121,9 @@ def build(stats: pd.DataFrame, sched: pd.DataFrame, slate_csv: Path) -> dict:
             {"name": "Under", "description": name, "price": -105, "point": line}]})
     pr.append({"key": "player_anytime_td", "last_update": "2026-10-12T21:00:00Z",
                "outcomes": [{"name": "Yes", "description": "Bijan Robinson", "price": -150}]})
-    props = {**g0, "bookmakers": [{"key": "draftkings", "title": "DraftKings", "markets": pr}]}
+    props = {**g0, "bookmakers": [{"key": "draftkings", "title": "DraftKings", "markets": pr},
+                                  {"key": "williamhill_us", "title": "Caesars", "markets": pr},
+                                  {"key": "fanatics", "title": "Fanatics", "markets": [m for m in pr if m["key"] == "player_anytime_td"]}]}
     return {"players": players, "projections": projections, "lobby": lobby,
             "draftables": {"draftables": draftables, "competitions": list(comps.values())},
             "state": {"season": "2026", "week": 6, "season_type": "regular", "display_week": 6},

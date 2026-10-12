@@ -474,3 +474,29 @@ def test_status_merge_with_unordered_index():
     out = projections.attach_status(shuffled, sp)
     hit = out[out.dk_id.isin(sp.dk_id)]
     assert hit.out.all() and out.out.sum() == 5
+
+
+def test_props_view_readable_consensus_and_filters():
+    from beatnfl import research
+    rows = []
+    for bk, ov, un in (("draftkings", -115, -105), ("fanduel", -110, -110), ("williamhill_us", -120, 100)):
+        rows.append({"game": "CHI @ ATL", "player": "Drake London", "stat": "rec_yds", "book": bk, "line": 74.5, "price": ov,
+                     "under_price": un, "model_pred": 85.0, "book_p_over": 0.52, "model_p_over": 0.63, "source_ts": ""})
+    for bk, pr, bp in (("draftkings", 190, 0.345), ("fanatics", 175, 0.364)):
+        rows.append({"game": "BAL @ CLE", "player": "Denzel Boston", "stat": "any_td", "book": bk, "line": 0.5, "price": pr,
+                     "under_price": None, "model_pred": 0.276, "book_p_over": bp, "model_p_over": 0.276, "source_ts": ""})
+    rows.append({"game": "BAL @ CLE", "player": "Chris Moore", "stat": "any_td", "book": "betonlineag", "line": 0.5, "price": 1400,
+                 "under_price": None, "model_pred": 0.163, "book_p_over": 0.067, "model_p_over": 0.163, "source_ts": ""})
+    b = pd.DataFrame(rows)
+    v = research.props_view(b)
+    assert len(v) == 3                                         # one consensus row per player/prop
+    dl = v[v.Player == "Drake London"].iloc[0]
+    assert dl.Prop == "Rec yds 74.5" and dl.Book == "3 books" and dl["Model %"] == "63%" and dl.Lean == "Over ★"
+    db = v[v.Player == "Denzel Boston"].iloc[0]
+    assert db.Lean == "—" and "incl. margin" in db["Book %"]   # TD 'No' leans are not shown (mostly book margin)
+    assert v[v.Player == "Chris Moore"].iloc[0].Lean == "Yes ★"
+    g = research.props_view(b, game="BAL @ CLE", book="Fanatics")
+    assert list(g.Player) == ["Denzel Boston"] and g.iloc[0].Odds == "+175"
+    s = research.props_view(b, book="Caesars")
+    assert list(s.Book) == ["Caesars"] and s.iloc[0].Odds == "-120"
+    assert list(research.props_view(b, sort="Sportsbook").Book)[0] == "1 book"

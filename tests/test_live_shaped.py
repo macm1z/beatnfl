@@ -120,11 +120,18 @@ def test_app_every_button(live, monkeypatch):
         assert not at.exception, f"{lab}: {[e.value for e in at.exception]}"
         errs = [e.value for e in at.error]
         assert not any("Unexpected" in e or "Traceback" in e for e in errs), f"{lab}: {errs}"
-    s.odds_api_key = s.yahoo_client_id = s.yahoo_client_secret = ""
-    s.save()
 
+    # props controls: pick a game, a sportsbook, each sort order, and the disagreement filter
+    for key, pick in (("props_game", 1), ("props_book", 1), ("props_sort", 1), ("props_sort", 2)):
+        sb = at.selectbox(key=key)
+        sb.set_value(sb.options[min(pick, len(sb.options) - 1)]).run()
+        assert not at.exception, f"{key}: {[e.value for e in at.exception]}"
+    at.toggle(key="props_only").set_value(True).run()
+    assert not at.exception
     run = at.session_state["run"]
     assert any(x.step == "4b. Paid projections" and x.status in ("ok", "warn") and "2 of" in x.message for x in run.steps)
+    s.odds_api_key = s.yahoo_client_id = s.yahoo_client_secret = ""
+    s.save()
 
 
 def test_yahoo_sign_in_and_refresh(monkeypatch, tmp_path):

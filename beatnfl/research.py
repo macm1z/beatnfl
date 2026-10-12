@@ -180,3 +180,83 @@ def matchups(season: int, week: int, offline=False, progress=lambda m: None) -> 
                 "Plays/game": a.e_off_plays,
             })
     return pd.DataFrame(rows).round(3)
+
+
+# ------------------------------------------------------------------ simplified props view
+BOOK_NAMES = {"draftkings": "DraftKings", "fanduel": "FanDuel", "betmgm": "BetMGM", "williamhill_us": "Caesars",
+              "fanatics": "Fanatics", "espnbet": "ESPN BET", "betrivers": "BetRivers", "ballybet": "Bally Bet",
+              "hardrockbet": "Hard Rock", "betonlineag": "BetOnline", "bovada": "Bovada", "mybookieag": "MyBookie",
+              "lowvig": "LowVig", "betus": "BetUS", "fliff": "Fliff", "pointsbetus": "PointsBet", "wynnbet": "WynnBET",
+              "unibet_us": "Unibet", "superbook": "SuperBook", "betparx": "betPARX", "espnbet_us": "ESPN BET"}
+STAT_NAMES = {"pass_yds": "Pass yds", "pass_att": "Pass att", "pass_cmp": "Completions", "pass_td": "Pass TDs",
+              "rush_yds": "Rush yds", "rush_att": "Rush att", "rec": "Receptions", "rec_yds": "Rec yds", "any_td": "Anytime TD"}
+CONSENSUS = "All books (consensus)"
+
+
+def book_name(key: str) -> str:
+    return BOOK_NAMES.get(key, str(key).replace("_", " ").title())
+
+
+def _odds(v) -> str:
+    try:
+        v = int(round(float(v)))
+    except (TypeError, ValueError):
+        return ""
+    return f"+{v}" if v > 0 else str(v)
+
+
+def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, sort: str = "Biggest difference") -> pd.DataFrame:
+    """One readable row per player/prop (consensus across books) or per book.
+
+    Over/under props: book % is no-vig (over and under prices paired).
+    Anytime TD: books quote only "Yes", so book % includes the book's margin — it runs high.
+    A TD prop is flagged only when the model is above the book (a 'No' lean would mostly be the margin)."""
+    if b is None or b.empty:
+        return pd.DataFrame()
+    d = b.copy()
+    if game and game != "All games":
+        d = d[d.game == game]
+    d["Book"] = d.book.map(book_name)
+    if book != CONSENSUS:
+        d = d[d.Book == book]
+    if d.empty:
+        return pd.DataFrame()
+    td = d.stat == "any_td"
+    if book == CONSENSUS:
+        g = d.groupby(["game", "player", "stat"], as_index=False).agg(
+            line=("line", "median"), price=("price", "median"), model_pred=("model_pred", "first"),
+            model_p_over=("model_p_over", "first"), book_p_over=("book_p_over", "median"), books=("book", "nunique"))
+        g["Book"] = g.books.map(lambda n: f"{n} book" + ("s" if n != 1 else ""))
+        d, td = g, g.stat == "any_td"
+    diff = (d.model_p_over - d.book_p_over) * 100
+    strong, lean = diff.abs() >= 8, diff.abs() >= 4
+
+    def label(i):
+        if pd.isna(diff[i]):
+            return "no forecast"
+        if td[i]:
+            return ("Yes ★" if diff[i] >= 8 else "Yes") if diff[i] >= 4 else "—"
+        if not lean[i]:
+            return "—"
+        side = "Over" if diff[i] > 0 else "Under"
+        return side + (" ★" if strong[i] else "")
+    out = pd.DataFrame({
+        "Game": d.game.values,
+        "Player": d.player.values,
+        "Prop": [("Anytime TD" if s == "any_td" else f"{STAT_NAMES.get(s, s)} {l:g}") for s, l in zip(d.stat, d.line)],
+        "Book": d.Book.values,
+        "Odds": [_odds(p) for p in d.price],
+        "Model": [("" if s == "any_td" or pd.isna(m) else f"{m:.1f}") for s, m in zip(d.stat, d.model_pred)],
+        "Model %": [("" if pd.isna(p) else f"{p * 100:.0f}%") for p in d.model_p_over],
+        "Book %": [("" if pd.isna(p) else f"{p * 100:.0f}%" + (" (incl. margin)" if s == "any_td" else ""))
+                   for p, s in zip(d.book_p_over, d.stat)],
+        "Lean": [label(i) for i in d.index],
+        "_diff": diff.abs().values, "_book": d.Book.values,
+    })
+    if sort == "Sportsbook":
+        out = out.sort_values(["_book", "Game", "Player"])
+    elif sort == "Player":
+        out = out.sort_values(["Player", "Prop", "_book"])
+    else:
+        out = out.sort_values("_diff", ascending=False, na_position="last")
+    return out.drop(columns=["_diff", "_book"]).reset_index(drop=True)
