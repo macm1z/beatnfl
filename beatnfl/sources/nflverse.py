@@ -164,3 +164,16 @@ def team_metrics(seasons, offline=False, progress=lambda m: None) -> pd.DataFram
         tm.to_parquet(cache, index=False)
         out.append(tm)
     return pd.concat(out, ignore_index=True)
+
+
+def upcoming_week(sched: pd.DataFrame) -> tuple[int, int]:
+    """The week most upcoming games belong to. Late in a week (e.g. Monday night), one leftover game
+    doesn't count — the following week with a full slate is chosen."""
+    up = sched[sched.home_score.isna() & (sched.game_type == "REG")]
+    if up.empty:
+        return current_season(), 1
+    first = up.sort_values(["season", "week"]).iloc[0]
+    nxt = up[(up.season == first.season) & up.week.isin([first.week, first.week + 1])]
+    cnt = nxt.groupby("week").size()
+    wk = int(cnt.idxmax())
+    return int(first.season), wk

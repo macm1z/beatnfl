@@ -262,12 +262,11 @@ with tab_yahoo:
             else:
                 from beatnfl.sources import nflverse as nv
                 sched = nv.schedules(offline=offline)
-                up = sched[sched.home_score.isna() & (sched.game_type == "REG")]
-                season_y = int(up.season.iloc[0]) if len(up) else nv.current_season()
+                season_y, wk_default = nv.upcoming_week(sched)
                 c1, c2 = st.columns([3, 1])
                 labels = [t["name"] for t in teams]
                 pick = c1.selectbox("Team", labels)
-                yweek = c2.number_input("Week", 1, 18, int(up.week.iloc[0]) if len(up) else 1, key="yweek")
+                yweek = c2.number_input("Week", 1, 18, wk_default, key="yweek")
                 team = teams[labels.index(pick)]
                 if st.button("Load roster & projections", type="primary"):
                     with st.spinner("Reading your roster and running the model…"):
@@ -344,8 +343,7 @@ with tab_research:
     from beatnfl.sources import nflverse as nv
     try:
         sched = nv.schedules(offline=offline)
-        upcoming = sched[sched.home_score.isna() & (sched.game_type == "REG")]
-        default = (int(upcoming.season.iloc[0]), int(upcoming.week.iloc[0])) if len(upcoming) else (nv.current_season(), 1)
+        default = nv.upcoming_week(sched)
     except StepError as e:
         st.error(e.as_text())
         default = (nv.current_season(), 1)
@@ -407,40 +405,55 @@ with tab_research:
                             "pct_rostered": "yahoo_pct_rostered", "pct_change": "yahoo_pct_change", "status_raw": "yahoo_status"})
                     except StepError as e:
                         st.warning("Yahoo data skipped: " + e.what)
-                ss["fc"], ss["pm"] = fc, pm
+                ss["fc"], ss["pm"], ss["fc_week"] = fc, pm, (int(season), int(week))
                 for w in warns:
                     st.warning(w)
             except StepError as e:
                 st.error(e.as_text())
     fc = ss.get("fc")
-    if fc is not None:
+    if fc is None:
+        st.caption("Click the button to forecast every player in this week's games.")
+    else:
         cols_fc = ["name", "position", "team", "opp", "injury", "p_dk_pts", "p_pass_yds", "p_pass_att", "p_rush_yds",
                    "p_rush_att", "p_rec", "p_rec_yds", "p_any_td", "yahoo_status", "yahoo_pct_rostered", "yahoo_pct_change"]
         show = fc[[c for c in cols_fc if c in fc]].rename(columns=lambda c: c.replace("p_", "", 1) if c.startswith("p_") else c)
         st.dataframe(show.sort_values("dk_pts", ascending=False).round(2), hide_index=True, width="stretch")
-        if not S.odds_api_key:
-            st.info("Add a free Odds API key in Settings to compare these against sportsbook prop lines.")
-        else:
-            from beatnfl import research
-            mk = st.multiselect("Prop markets", list(__import__("beatnfl.sources.odds", fromlist=["x"]).PROP_MARKETS),
-                                research.CORE_PROP_MARKETS)
-            n_games = fc.game_id.nunique()
-            st.caption(f"Estimated cost: about {len(mk) * n_games} Odds API credits ({len(mk)} markets × {n_games} games). "
-                       "Free tier = 500/month.")
-            if st.button("Load props"):
-                with st.spinner("Pulling props…"):
-                    try:
-                        board, info = research.props_board(S.odds_api_key, int(season), int(week), fc, ss["pm"], mk,
-                                                           offline=offline)
-                        ss["board"] = board
-                    except StepError as e:
-                        st.error(e.as_text())
-            b = ss.get("board")
-            if b is not None:
-                me = st.slider("Show where |model − book| probability ≥", 0.0, 0.3, 0.05, 0.01)
-                st.dataframe(b[b.edge.abs() >= me], hide_index=True, width="stretch")
-                st.caption("book_p_over = no-vig probability from that book's over/under prices. Edges shown are model "
-                           "opinions; their track record against real lines appears in Evidence once games finish.")
+
+    st.subheader("Props")
+    if not S.odds_api_key:
+        st.warning("**Props need a free Odds API key** — that's where the sportsbook lines come from.\n\n"
+                   "1. Sign up at [the-odds-api.com](https://the-odds-api.com/) (free plan, key arrives by email).\n"
+                   "2. Paste it into **Settings** in the sidebar and click **Save settings**.\n\n"
+                   "Forecasts above, lineups and the prop checker in the test page work without it.")
+    else:
+        from beatnfl import research
+        from beatnfl.sources import odds as _odds
+        mk = st.multiselect("Prop markets", list(_odds.PROP_MARKETS), research.CORE_PROP_MARKETS)
+        n_games = int(fc.game_id.nunique()) if fc is not None else 14
+        st.caption(f"Each load costs about {len(mk) * n_games} Odds API credits ({len(mk)} markets × {n_games} games). "
+                   "Free plan = 500/month, so about one full load per week. Books post most player props "
+                   "2–4 days before kickoff — loading earlier returns little or nothing.")
+        if st.button("Load props"):
+            with st.spinner("Pulling props…"):
+                try:
+                    if ss.get("fc") is None or ss.get("fc_week") != (int(season), int(week)):
+                        from beatnfl.models import train
+                        pm, dm, meta = train.get_models(offline=offline)
+                        ss["fc"], _ = train.forecast_week(int(season), int(week), None, pm, lines, offline=offline)
+                        ss["pm"], ss["fc_week"] = pm, (int(season), int(week))
+                    board, info = research.props_board(S.odds_api_key, int(season), int(week), ss["fc"], ss["pm"], mk,
+                                                       offline=offline)
+                    ss["board"] = board
+                    st.success(f"{len(board)} prop lines from {info['games']} games.")
+                except StepError as e:
+                    ss["board"] = None
+                    st.error(e.as_text())
+        b = ss.get("board")
+        if b is not None and not b.empty:
+            me = st.slider("Show where |model − book| probability ≥", 0.0, 0.3, 0.05, 0.01)
+            st.dataframe(b[b.edge.abs() >= me], hide_index=True, width="stretch")
+            st.caption("book_p_over = no-vig probability from that book's over/under prices. Edges are model opinions; "
+                       "their record against real lines appears in Evidence as games finish.")
 
 # ------------------------------------------------------------------ EVIDENCE
 with tab_evidence:
@@ -498,6 +511,25 @@ with tab_evidence:
 
 # ------------------------------------------------------------------ STATUS
 with tab_status:
+    st.markdown("**Something not working?** Click below, then copy the block (copy icon, top right) and paste it to Claude. "
+                "It contains no keys or passwords.")
+    if st.button("Copy diagnostics", type="primary"):
+        import platform
+        from beatnfl import doctor, update as _u
+        rep = [f"BeatNFL {__version__} · commit {(_u.installed() or 'unknown')[:7]} · {platform.platform()} · Python {platform.python_version()}",
+               "Keys set: " + ", ".join(f"{k}={'yes' if getattr(S, k) else 'no'}" for k in
+                                          ("odds_api_key", "yahoo_client_id", "yahoo_client_secret", "github_token")),
+               "", "== Source checks =="]
+        doctor.run(rep.append)
+        stt_ = storage.data_status()
+        if not stt_.empty:
+            rep += ["", "== Last results per step =="] + [f"{r.source}: {r.status} · {r.message}" for r in stt_.itertuples()]
+        r_ = ss.get("run")
+        if r_:
+            rep += ["", "== Last run on this page =="] + [x.as_text() for x in r_.steps]
+        if LOG_PATH.exists():
+            rep += ["", "== Log (last 40 lines) =="] + LOG_PATH.read_text().splitlines()[-40:]
+        st.code("\n".join(rep), language=None)
     if st.button("Test every source now"):
         from beatnfl import doctor
         lines_out = []
