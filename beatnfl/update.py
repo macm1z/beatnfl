@@ -171,7 +171,9 @@ def restart() -> bool:
     """Restart the background app so new code loads (macOS/Linux). Returns False where unsupported."""
     if sys.platform.startswith("win") or not (APP_DIR / "launch.sh").exists():
         return False
-    cmd = (f"sleep 1; pkill -f 'streamlit run.*app.py'; sleep 2; /bin/bash '{APP_DIR / 'launch.sh'}'")
+    # "[s]treamlit" matches the app but not this restart command's own text (a plain pattern made pkill
+    # stop the restart itself, leaving the old version running)
+    cmd = (f"sleep 1; pkill -f '[s]treamlit run {APP_DIR}/app.py'; sleep 3; /bin/bash '{APP_DIR / 'launch.sh'}'")
     subprocess.Popen(["/bin/bash", "-c", cmd], start_new_session=True,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return True

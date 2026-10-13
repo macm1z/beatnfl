@@ -12,6 +12,27 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+
+def _drop_stale_modules():
+    """After an update the server process may still hold the previous version's modules in memory
+    (Streamlit re-reads app.py on every page load, but not the modules it imports). If the version on
+    disk differs from the one loaded, forget the old modules so the new code is imported below."""
+    import re
+    loaded = sys.modules.get("beatnfl")
+    if loaded is None:
+        return
+    init = Path(loaded.__file__)
+    try:
+        disk = re.search(r'__version__ = "([^"]+)"', init.read_text()).group(1)
+    except Exception:  # noqa: BLE001
+        return
+    if disk != getattr(loaded, "__version__", None):
+        for name in [m for m in sys.modules if m == "beatnfl" or m.startswith("beatnfl.")]:
+            del sys.modules[name]
+
+
+_drop_stale_modules()
+
 from beatnfl import __version__, export, optimizer, pipeline, storage  # noqa: E402
 from beatnfl.config import EXPORTS, HOME, INBOX, LOG_PATH, Settings, ensure_dirs  # noqa: E402
 from beatnfl.errors import StepError  # noqa: E402

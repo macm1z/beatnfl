@@ -532,3 +532,28 @@ def test_game_probabilities_market_and_model():
     m = odds.market_summary(pd.DataFrame(rows)).iloc[0]
     assert m.spread_nv == 3.0 and m.total == 44.5 and m.books == 2
     assert 0.49 < m.p_home_cover < 0.51 and 0.58 < m.p_home_win < 0.61 and 0.48 < m.p_over < 0.51
+
+
+def test_app_recovers_from_stale_modules_after_update(tmp_path, monkeypatch):
+    """Server still holding the previous version's modules (the v1.5.0 'no attribute duplicate_sets' crash)."""
+    from streamlit.testing.v1 import AppTest
+    import beatnfl
+    from beatnfl import storage as old_storage
+    monkeypatch.setattr(beatnfl, "__version__", "0.0-old")
+    monkeypatch.delattr(old_storage, "duplicate_sets")
+    at = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"), default_timeout=120)
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    import sys
+    assert hasattr(sys.modules["beatnfl.storage"], "duplicate_sets")
+
+
+
+def test_restart_pattern_cannot_match_itself():
+    import re
+    import inspect
+    from beatnfl import update
+    src = inspect.getsource(update.restart)
+    pat = re.search(r"pkill -f '([^']+)'", src).group(1)
+    assert pat.startswith("[s]treamlit")                       # regex trick: never matches its own command line
+    assert not re.search(pat.replace("{APP_DIR}", "/a/BeatNFL"), "sleep 1; pkill -f '" + pat + "'")

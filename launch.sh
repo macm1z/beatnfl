@@ -10,7 +10,7 @@ mkdir -p "$HOME/BeatNFL"
 running() { curl -sf "$URL/_stcore/health" >/dev/null 2>&1; }
 
 if [ "$1" = "stop" ]; then
-  pkill -f "streamlit run $DIR/app.py" && echo "BeatNFL stopped." || echo "BeatNFL was not running."
+  pkill -f "[s]treamlit run $DIR/app.py" && echo "BeatNFL stopped." || echo "BeatNFL was not running."
   exit 0
 fi
 
