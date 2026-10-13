@@ -42,6 +42,8 @@ Tabs: **This week** (pool and lineups) · **Saved lineups** (rename, delete, rem
 3. **⚙ Build lineups**, then **💾 Save** if you want to keep them. Lineups are ranked best projection first. Saving writes the DK upload CSV and a readable CSV to `~/BeatNFL/exports`; an identical set is never saved twice. Download buttons work without saving.
 4. Upload `DK_upload_….csv` on DraftKings yourself (Upload Lineups).
 
+**FantasyPros API (recommended if you're an MVP/HOF member):** paste your production key from secure.fantasypros.com/api-keys into **Settings → FantasyPros API key**. Every Refresh then pulls FantasyPros' weekly projections and converts their projected stats to DraftKings points for the **Yours** column — no pasting. A table you paste on *Load data* replaces them for that refresh. A free (sample-data) key is detected and reported, never used as if complete.
+
 **Optional inputs, all dropped in `~/BeatNFL/inbox`:**
 - **Paid projections:** drop your site's DK projection CSV in the inbox. Columns are detected and shown.
 - **Fallback slate:** if DraftKings blocks the automatic download, drop `DKSalaries.csv` in the inbox. The app uses it automatically and says so. To get it: DraftKings → any NFL Classic contest → Export to CSV.
@@ -62,7 +64,7 @@ Headless option: `python -m beatnfl run` does the whole week and writes the file
 |---|---|---|
 | Slate, salaries, IDs | DraftKings lobby + draftables JSON → DK CSV endpoint | Inbox `DKSalaries.csv` (always works) |
 | Injuries, depth charts | Sleeper (free) + DraftKings' own status tags | DK tags only, flagged |
-| Projections | Paid CSV, Sleeper, in-house model (blend weights in Settings) | Remaining sources renormalized |
+| Projections | FantasyPros API (or pasted/CSV table), Sleeper, in-house model (blend weights in Settings) | Remaining sources renormalized |
 | History, lines, results | nflverse (GitHub releases) | Cached copy, shown as STALE |
 | Live lines, props | The Odds API | nflverse lines; props hidden |
 
@@ -126,4 +128,4 @@ Two checks only run on your computer, because their sources were blocked from th
 - `~/BeatNFL/evidence` — test results
 - `~/BeatNFL/beatnfl.log` — technical detail for any failure
 
-Tests: `.venv/bin/python -m pytest -q tests` (30 offline tests; `BEATNFL_FULL=1` adds 4 end-to-end tests that click every button).
+Tests: `.venv/bin/python -m pytest -q tests` (34 offline tests; `BEATNFL_FULL=1` adds 4 end-to-end tests that click every button).

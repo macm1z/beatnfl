@@ -24,6 +24,7 @@ def ensure_dirs() -> None:
 @dataclass
 class Settings:
     odds_api_key: str = ""
+    fantasypros_api_key: str = ""   # production key (MVP/HOF) → weekly projections fill "Yours" automatically
     yahoo_client_id: str = ""
     yahoo_client_secret: str = ""
     update_repo: str = "macm1z/beatnfl"  # GitHub "owner/name" the Update button pulls from

@@ -66,6 +66,20 @@ def run(out=print) -> bool:
     else:
         out("⏭️  The Odds API: no key set (optional — needed for live lines and props).")
 
+    if s.fantasypros_api_key:
+        from .sources import fantasypros
+
+        def fp():
+            season, week = nv.upcoming_week(nv.schedules())
+            df, info = fantasypros.projections(s.fantasypros_api_key, season, week)
+            note = f"{len(df)} projections for {season} week {week} ({info.get('tier') or 'unknown'} key)"
+            if info.get("limited") or info.get("short"):
+                raise RuntimeError(note + " — sample data only: activate production access for this key")
+            return note
+        res["fantasypros"] = _check("FantasyPros projections (API)", fp, out)
+    else:
+        out("⏭️  FantasyPros API: no key set (optional — fills 'Yours' automatically).")
+
     if s.yahoo_client_id and s.yahoo_client_secret:
         from .sources import yahoo
         if yahoo.connected():

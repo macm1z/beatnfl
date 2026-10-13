@@ -537,8 +537,12 @@ def test_game_probabilities_market_and_model():
 def test_app_recovers_from_stale_modules_after_update(tmp_path, monkeypatch):
     """Server still holding the previous version's modules (the v1.5.0 'no attribute duplicate_sets' crash)."""
     from streamlit.testing.v1 import AppTest
+    import sys
     import beatnfl
     from beatnfl import storage as old_storage
+    saved = {k: v for k, v in sys.modules.items() if k == "beatnfl" or k.startswith("beatnfl.")}
+    for k in saved:   # put the original modules back afterwards so later tests share one copy
+        monkeypatch.setitem(sys.modules, k, v := saved[k])
     monkeypatch.setattr(beatnfl, "__version__", "0.0-old")
     monkeypatch.delattr(old_storage, "duplicate_sets")
     at = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"), default_timeout=120)
@@ -557,3 +561,76 @@ def test_restart_pattern_cannot_match_itself():
     pat = re.search(r"pkill -f '([^']+)'", src).group(1)
     assert pat.startswith("[s]treamlit")                       # regex trick: never matches its own command line
     assert not re.search(pat.replace("{APP_DIR}", "/a/BeatNFL"), "sleep 1; pkill -f '" + pat + "'")
+
+
+# ---------------------------------------------------------------- FantasyPros API (v1.6)
+def _fp_payload(pos, players, tier="premium", count=None):
+    return {"season": "2026", "week": "6", "count": str(count if count is not None else len(players)), "positions": pos,
+            "scoring": "STD", "players": players, "public_api_limited": True, "tier": tier}
+
+
+def _fp_fake(ls, tier="premium", short=False):
+    """FantasyPros-shaped responses (field names as recorded from the live API) for slate players."""
+    pl = ls.players
+    by = {}
+    for pos in ("QB", "RB", "WR", "TE", "DST"):
+        rows = []
+        for r in pl[pl.pos == pos].head(12).itertuples():
+            if pos == "DST":
+                st = {"points": 8.0, "points_ppr": 8.0, "points_half": 8.0, "def_sack": 2.8, "def_int": 0.9, "def_td": 0.15,
+                      "def_pa": 21.5, "def_tyda": 320, "def_safety": 0.05, "def_ff": 0.8, "def_fr": 0.6, "def_retd": 0.05}
+                rows.append({"fpid": 1, "mflid": 1, "name": f"{r.team} Defense", "position_id": "DST", "team_id": r.team,
+                             "filename": "x.php", "stats": st})
+            elif pos == "QB":
+                st = {"points": 18.0, "points_ppr": 18.0, "points_half": 18.0, "pass_att": 34, "pass_cmp": 22.5,
+                      "pass_yds": 245.0, "pass_tds": 1.7, "pass_ints": 0.7, "rush_att": 4, "rush_yds": 22.0, "rush_tds": 0.2,
+                      "fumbles": 0.2, "2pt_tds": 0}
+                rows.append({"fpid": 2, "name": r.name, "position_id": "QB", "team_id": "JAC" if r.team == "JAX" else r.team, "stats": st})
+            else:
+                st = {"points": 9.0, "points_ppr": 13.5, "points_half": 11.2, "rush_att": 3, "rush_yds": 12.0, "rush_tds": 0.05,
+                      "rec_rec": 4.5, "rec_yds": 55.0, "rec_tds": 0.35, "fumbles": 0.05, "ret_tds": 0, "2pt_tds": 0}
+                rows.append({"fpid": 3, "name": r.name, "position_id": pos, "team_id": r.team, "stats": st})
+        by[pos] = _fp_payload(pos, rows, tier, count=len(rows) + (5 if short else 0))
+    return by
+
+
+def test_fantasypros_api_dk_points_and_matching(monkeypatch):
+    from beatnfl.sources import fantasypros
+    from beatnfl.net import Meta
+    ls, pool = pool_from_fixture()
+    fake = _fp_fake(ls)
+    calls = []
+
+    def fetch_json(url, params=None, headers=None, **kw):
+        calls.append((url, params, headers))
+        return fake[params["position"]], Meta(url, 0, False, False)
+    monkeypatch.setattr(fantasypros, "fetch_json", fetch_json)
+    df, info = fantasypros.projections("KEY", 2026, 6)
+    assert all(h == {"x-api-key": "KEY"} for _, _, h in calls) and calls[0][0].endswith("/nfl/2026/projections")
+    assert {p["position"] for _, p, _ in calls} == {"QB", "RB", "WR", "TE", "DST"} and all(p["week"] == 6 for _, p, _ in calls)
+    qb = df[df.pos == "QB"].iloc[0].proj_paid
+    # 245*.04 + 1.7*4 - .7 + 22*.1 + .2*6 - .2 + bonus(P(300+)≈.2 → ~0.6)
+    assert 18.5 < qb < 20.5
+    wr = df[df.pos == "WR"].iloc[0].proj_paid
+    assert 13.4 < wr < 14.5                                   # PPR-like, plus a small 100-yd bonus chance
+    assert df[df.pos == "DST"].proj_paid.between(4, 9).all()
+    m, n = projections.match_external(pool, df, "proj_paid")
+    assert n == len(df)                                       # every row matched, DSTs by team, JAC→JAX
+    assert info["tier"] == "premium" and not info["limited"] and not info["short"]
+
+
+def test_fantasypros_sample_key_and_bad_key_are_explained(monkeypatch):
+    from beatnfl.sources import fantasypros
+    from beatnfl.net import Meta
+    ls, _ = pool_from_fixture()
+    fake = _fp_fake(ls, tier="free", short=True)
+    monkeypatch.setattr(fantasypros, "fetch_json", lambda url, params=None, **kw: (fake[params["position"]], Meta(url, 0, False, False)))
+    _, info = fantasypros.projections("K", 2026, 6)
+    assert info["limited"] and info["short"]
+
+    def refuse(url, **kw):
+        raise StepError("x", "Could not download", detail="HTTP 403: Forbidden")
+    monkeypatch.setattr(fantasypros, "fetch_json", refuse)
+    with pytest.raises(StepError) as e:
+        fantasypros.projections("BAD", 2026, 6)
+    assert "refused the API key" in e.value.what

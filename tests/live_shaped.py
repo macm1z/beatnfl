@@ -124,7 +124,28 @@ def build(stats: pd.DataFrame, sched: pd.DataFrame, slate_csv: Path) -> dict:
     props = {**g0, "bookmakers": [{"key": "draftkings", "title": "DraftKings", "markets": pr},
                                   {"key": "williamhill_us", "title": "Caesars", "markets": pr},
                                   {"key": "fanatics", "title": "Fanatics", "markets": [m for m in pr if m["key"] == "player_anytime_td"]}]}
-    return {"players": players, "projections": projections, "lobby": lobby,
+    # FantasyPros API: one payload per position, field names as recorded from the live API
+    fp = {}
+    for pos in ("QB", "RB", "WR", "TE", "DST"):
+        rows = []
+        for r in sal[sal["Position"] == pos].head(60).itertuples():
+            a = float(getattr(r, "AvgPointsPerGame") or 0)
+            team = getattr(r, "TeamAbbrev")
+            if pos == "DST":
+                st = {"points": a, "points_ppr": a, "def_sack": 2.5, "def_int": 0.8, "def_fr": 0.6, "def_td": 0.1,
+                      "def_retd": 0.03, "def_safety": 0.04, "def_pa": 22.0}
+                rows.append({"fpid": 9000, "name": f"{team} Defense", "position_id": "DST", "team_id": team, "stats": st})
+                continue
+            if pos == "QB":
+                st = {"points": a, "points_ppr": a, "pass_yds": 12 * a, "pass_tds": a / 12, "pass_ints": 0.7,
+                      "rush_yds": a / 2, "rush_tds": 0.1, "fumbles": 0.2}
+            else:
+                st = {"points": a * .8, "points_ppr": a, "rush_yds": a * (3 if pos == "RB" else .2), "rush_tds": .02 * a,
+                      "rec_rec": a / 4, "rec_yds": a * 3.5, "rec_tds": .02 * a, "fumbles": 0.05}
+            rows.append({"fpid": 1000, "name": getattr(r, "Name"), "position_id": pos, "team_id": team, "stats": st})
+        fp[pos] = {"season": "2026", "week": "6", "count": str(len(rows)), "positions": pos, "scoring": "STD",
+                   "players": rows, "public_api_limited": True, "tier": "premium"}
+    return {"fp": fp, "players": players, "projections": projections, "lobby": lobby,
             "draftables": {"draftables": draftables, "competitions": list(comps.values())},
             "state": {"season": "2026", "week": 6, "season_type": "regular", "display_week": 6},
             "events": events, "odds": odds, "props": props, "props_event": g0["id"]}
@@ -136,6 +157,8 @@ def install(monkeypatch, payloads: dict):
     real = net.fetch
 
     def fake(url, **kw):
+        if "api.fantasypros.com" in url:
+            return json.dumps(payloads["fp"][kw["params"]["position"]]).encode(), net.Meta(url, 1.8e9, False, False)
         m = {"api.sleeper.app/v1/players/nfl": "players", "api.sleeper.app/projections/": "projections",
              "api.sleeper.app/v1/state/nfl": "state", "draftkings.com/lobby/getcontests": "lobby",
              "/draftables": "draftables", "/events/" + payloads["props_event"] + "/odds": "props",
@@ -147,7 +170,8 @@ def install(monkeypatch, payloads: dict):
                 return json.dumps(payloads[key]).encode(), net.Meta(url, 1.8e9, False, False)
         return real(url, **kw)
     monkeypatch.setattr(net, "fetch", fake)
-    for mod in ("beatnfl.sources.dk", "beatnfl.sources.sleeper", "beatnfl.sources.odds", "beatnfl.sources.nflverse"):
+    for mod in ("beatnfl.sources.dk", "beatnfl.sources.sleeper", "beatnfl.sources.odds", "beatnfl.sources.nflverse",
+                "beatnfl.sources.fantasypros"):
         import importlib
         m = importlib.import_module(mod)
         if hasattr(m, "fetch"):

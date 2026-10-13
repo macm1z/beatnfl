@@ -62,8 +62,11 @@ def test_weekly_run_all_sources(live, monkeypatch):
     from beatnfl.config import Settings
     from beatnfl.optimizer import OptSettings, validate
     _yahoo_mock(monkeypatch)
-    s = Settings(odds_api_key="test-key", yahoo_client_id="cid", yahoo_client_secret="sec")
+    s = Settings(odds_api_key="test-key", yahoo_client_id="cid", yahoo_client_secret="sec", fantasypros_api_key="fp-key")
     run = pipeline.run_week(s)
+    fp = [x for x in run.steps if x.step == "4b. FantasyPros projections"]
+    assert fp and fp[0].status == "ok", [x.as_text() for x in run.steps if x.step.startswith("4b")]
+    assert run.pool.proj_paid.notna().sum() > 150
     _no_bugs(run)
     steps = {x.step: x for x in run.steps}
     assert run.slate.route == "json" and steps["1. Slate"].status in ("ok", "warn")
@@ -137,7 +140,7 @@ def test_app_every_button(live, monkeypatch):
     from beatnfl import storage
     assert len(storage.list_lineup_sets()) >= 1
     run = at.session_state["run"]
-    assert any(x.step == "4b. Paid projections" and x.status in ("ok", "warn") and "2 of" in x.message for x in run.steps)
+    assert any(x.step == "4b. Your projections" and x.status in ("ok", "warn") and "2 of" in x.message for x in run.steps)
     s.odds_api_key = s.yahoo_client_id = s.yahoo_client_secret = ""
     s.save()
 

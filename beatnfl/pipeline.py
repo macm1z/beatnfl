@@ -200,29 +200,49 @@ def run_week(settings: Settings | None = None, *, salary_file: Path | bytes | No
             run.add("4a. Sleeper projections", "ok" if n else "warn", f"{n} slate players matched ({note}).")
         except Exception as e:
             _err(run, "4a. Sleeper projections", e, status="warn")
-    progress("Reading paid projections…")
+    progress("Reading your projections…")
     try:
         pf = paid_file
         name = "upload"
-        if pf is None:
-            f = paidcsv.newest_in(INBOX)
-            pf, name = (f.read_bytes(), f.name) if f else (None, "")
-        elif isinstance(pf, Path):
-            pf, name = pf.read_bytes(), pf.name
-        if pf is None:
-            run.add("4b. Paid projections", "skip", "No paid projection file in the inbox.",
-                    "Paste your projections table on the Load data tab, or drop a projections CSV in your BeatNFL/inbox folder.")
-        else:
-            pj, mapping = paidcsv.parse(pf, name)
-            m, n = projections.match_external(pool, pj, "proj_paid")
+        if pf is None and s.fantasypros_api_key and run.season and run.week:
+            # FantasyPros API: used unless you uploaded or pasted a table for this run
+            from .sources import fantasypros
+            fp, info = fantasypros.projections(s.fantasypros_api_key, run.season, run.week, offline=offline)
+            m, n = projections.match_external(pool, fp, "proj_paid")
             sources["paid"] = m
-            src_meta["paid"] = {"file": name, **mapping}
-            st = "ok" if n >= 0.5 * len(pool[~pool.out]) else "warn"
-            run.add("4b. Paid projections", st, f"{name}: {n} of {len(pool)} slate players matched "
-                    f"(projection column: '{mapping['projection']}').",
-                    "" if st == "ok" else "Low match rate — check the file is for this slate and DraftKings scoring.")
+            src_meta["paid"] = {"file": "FantasyPros API", "tier": info.get("tier"), "projection": "DK points from FantasyPros stat lines"}
+            limited = info.get("limited") or info.get("short")
+            active = len(pool[~pool.out])
+            st = "ok" if n >= 0.5 * active and not limited else "warn"
+            msg = f"FantasyPros API: {n} of {len(pool)} slate players matched (DK points computed from their projected stats)."
+            fix = ""
+            if limited:
+                msg += f" Your key returned sample data only ({'; '.join(info['short']) or 'free tier'})."
+                fix = ("Activate production access for your key (MVP/HOF member page at secure.fantasypros.com/api-keys), "
+                       "then Refresh.")
+            elif st == "warn":
+                fix = "Low match rate — FantasyPros may not have posted this week's projections yet; Refresh later."
+            run.add("4b. FantasyPros projections", st, msg, fix)
+        else:
+            if pf is None:
+                f = paidcsv.newest_in(INBOX)
+                pf, name = (f.read_bytes(), f.name) if f else (None, "")
+            elif isinstance(pf, Path):
+                pf, name = pf.read_bytes(), pf.name
+            if pf is None:
+                run.add("4b. Your projections", "skip", "No FantasyPros API key, pasted table or projections file.",
+                        "Add your FantasyPros API key in Settings, or paste a projections table on the Load data tab.")
+            else:
+                pj, mapping = paidcsv.parse(pf, name)
+                m, n = projections.match_external(pool, pj, "proj_paid")
+                sources["paid"] = m
+                src_meta["paid"] = {"file": name, **mapping}
+                st = "ok" if n >= 0.5 * len(pool[~pool.out]) else "warn"
+                run.add("4b. Your projections", st, f"{name}: {n} of {len(pool)} slate players matched "
+                        f"(projection column: '{mapping['projection']}').",
+                        "" if st == "ok" else "Low match rate — check the file is for this slate and DraftKings scoring.")
     except Exception as e:
-        _err(run, "4b. Paid projections", e, status="warn")
+        _err(run, "4b. Your projections", e, status="warn")
     if use_model:
         progress("Running the in-house model…")
         try:

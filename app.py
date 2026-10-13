@@ -152,17 +152,21 @@ with st.sidebar:
     with st.expander("Settings"):
         key = st.text_input("The Odds API key (optional)", S.odds_api_key, type="password",
                             help="Free key at the-odds-api.com — powers live lines and props.")
+        fpkey = st.text_input("FantasyPros API key (optional)", S.fantasypros_api_key, type="password",
+                              help="Production key from secure.fantasypros.com/api-keys (MVP/HOF). Fills the 'Yours' "
+                                   "projection automatically on every Refresh.")
         yid = st.text_input("Yahoo Client ID (optional)", S.yahoo_client_id, type="password")
         ysec = st.text_input("Yahoo Client Secret (optional)", S.yahoo_client_secret, type="password")
         st.caption("Blend weights for the **Combined** projection")
         c1, c2, c3 = st.columns(3)
-        wp = c1.number_input("Yours", 0.0, 1.0, S.w_paid, 0.05, help="Your paid projections (FantasyPros CSV or pasted table)")
+        wp = c1.number_input("Yours", 0.0, 1.0, S.w_paid, 0.05, help="Your projections: FantasyPros API (key in Settings), or a pasted table / CSV")
         ws = c2.number_input("Sleeper", 0.0, 1.0, S.w_sleeper, 0.05)
         wm = c3.number_input("Model", 0.0, 1.0, S.w_model, 0.05)
         qh = st.slider("Questionable haircut", 0.5, 1.0, S.questionable_haircut, 0.05,
                        help="Questionable players' Combined projection is multiplied by this.")
         if st.button("Save settings"):
             S.odds_api_key, S.w_paid, S.w_sleeper, S.w_model, S.questionable_haircut = key, wp, ws, wm, qh
+            S.fantasypros_api_key = fpkey.strip()
             S.yahoo_client_id, S.yahoo_client_secret = yid.strip(), ysec.strip()
             S.save()
             st.success("Saved. Click ⟳ Refresh to apply new weights.")
@@ -271,7 +275,8 @@ with tab_week:
                         f"whichever sources cover the player. Questionable players × {S.questionable_haircut}. "
                         "Change weights in Settings (sidebar).",
             "Pts/$1K": "Combined projection ÷ salary × 1,000 — points per $1,000 of salary.",
-            "Yours": "Your paid projections (FantasyPros CSV or pasted table, set on the Load data tab).",
+            "Yours": "Your projections: FantasyPros via its API when the key is set in Settings (DraftKings points computed "
+                     "from their projected stats), or a table you pasted / uploaded on the Load data tab.",
             "Sleeper": "Sleeper's free published projection, scored with DraftKings rules. How it compares to the "
                        "model historically: Evidence tab → Sleeper vs model.",
             "Model": "BeatNFL's own forecast. Gradient-boosted model trained on every NFL game since 2018 (nflverse): "
@@ -695,6 +700,9 @@ with tab_load:
         st.caption("If DraftKings blocks the download, the newest DKSalaries*.csv in the inbox is used automatically.")
     else:
         st.file_uploader("DKSalaries.csv (DraftKings → NFL Classic contest → Export to CSV)", type="csv", key="up_file")
+    if S.fantasypros_api_key:
+        st.caption("✅ FantasyPros API key set — your projections load automatically on Refresh. "
+                   "A table pasted or uploaded below replaces them for that refresh.")
     st.file_uploader("Your projections CSV (optional — newest file in the inbox is used otherwise)", type="csv", key="paid_file")
     st.text_area("…or paste a projections table (e.g. copy FantasyPros' table in your browser, paste here)",
                  height=90, key="pasted_proj")
@@ -928,7 +936,7 @@ with tab_status:
         from beatnfl import doctor, update as _u
         rep = [f"BeatNFL {__version__} · commit {(_u.installed() or 'unknown')[:7]} · {platform.platform()} · Python {platform.python_version()}",
                "Keys set: " + ", ".join(f"{k}={'yes' if getattr(S, k) else 'no'}" for k in
-                                          ("odds_api_key", "yahoo_client_id", "yahoo_client_secret", "github_token")),
+                                          ("odds_api_key", "fantasypros_api_key", "yahoo_client_id", "yahoo_client_secret", "github_token")),
                "", "== Source checks =="]
         doctor.run(rep.append)
         stt_ = storage.data_status()
