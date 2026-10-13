@@ -233,7 +233,7 @@ def run_week(settings: Settings | None = None, *, salary_file: Path | bytes | No
             sources["model"] = res[["dk_id", "proj_model"]].dropna()
             src_meta["model"] = meta
             run.add("4c. In-house model", "ok" if not warns else "warn",
-                    f"{len(sources['model'])} players projected (model {meta['tag']}). " + " ".join(warns))
+                    f"{len(sources['model'])} players projected (model {meta['tag']}). " + " ".join(warns + info.get("notes", [])))
             run._model_detail = res
         except Exception as e:
             _err(run, "4c. In-house model", e, status="warn")

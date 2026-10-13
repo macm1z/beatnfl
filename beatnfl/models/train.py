@@ -139,9 +139,10 @@ def forecast(slate: pd.DataFrame, sleeper_players: pd.DataFrame | None, pm: Play
     sl = slate[slate.pos != "DST"].copy()
     sl["player_id"] = identify(sl, sleeper_players, hist)
     unmatched = sl.player_id.isna().sum()
-    if unmatched:
-        warns.append(f"{int(unmatched)} slate players have no NFL game history (rookies/new signings) — "
-                     "the in-house model skips them; other sources still cover them.")
+    notes = []
+    if unmatched:   # informational, not a problem: Sleeper / your projections cover these players
+        notes.append(f"{int(unmatched)} players with no NFL game history yet (rookies/new signings) are covered by "
+                     "the other sources instead.")
 
     # expected actives: slate players not ruled out
     out_status = {"O", "IR", "D", "OUT", "Out"}
@@ -175,7 +176,7 @@ def forecast(slate: pd.DataFrame, sleeper_players: pd.DataFrame | None, pm: Play
         dproj = pd.DataFrame({"team": fx_d.team.values, "proj_model": dm.predict(fx_d)})
         dres = dst_rows[["dk_id", "team"]].merge(dproj, on="team", how="left")[["dk_id", "proj_model"]]
         res = pd.concat([res, dres], ignore_index=True)
-    info = {"season": season, "week": week, "games": len(wk) // 2}
+    info = {"season": season, "week": week, "games": len(wk) // 2, "notes": notes}
     return res, warns, info
 
 
