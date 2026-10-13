@@ -59,7 +59,8 @@ def dk_points(pos: str, stats: dict) -> float | None:
         line = {k: _pick(stats, v) for k, v in DST_KEYS.items()}
         return round(dk_dst_from_stat_line(line), 2) if any(line.values()) else None
     line = {k: _pick(stats, v) for k, v in OFF_KEYS.items()}
-    if not any(line[k] for k in ("pass_yd", "rush_yd", "rec", "rec_yd")):
+    needed = ("pass_yd",) if pos == "QB" else ("rush_yd", "rec", "rec_yd")
+    if not any(line[k] for k in needed):
         # no usable stat line — fall back to their PPR total (close to DK, minus yardage bonuses)
         ppr = stats.get("points_ppr")
         return round(float(ppr), 2) if ppr is not None else None
