@@ -133,6 +133,36 @@ def props(key: str, event_id: str, markets: list[str] | None = None, offline=Fal
     return pd.DataFrame(rows)
 
 
+# ------------------------------------------------------------------ historical (paid plans)
+HIST = "https://api.the-odds-api.com/v4/historical/sports/americanfootball_nfl"
+
+
+def hist_events(key: str, at_iso: str, offline=False) -> list[dict]:
+    """Events listed at a past moment (1 credit). Responses never change, so they are cached for good."""
+    _need_key(key)
+    data, _ = fetch_json(f"{HIST}/events", params={"apiKey": key, "date": at_iso}, step=STEP, max_age_h=1e9,
+                         offline=offline)
+    return data.get("data") or []
+
+
+def hist_props(key: str, event_id: str, at_iso: str, markets: list[str], offline=False) -> tuple[pd.DataFrame, str]:
+    """Prop prices for one game as they stood at a past moment (10 credits per market returned).
+    Returns (rows, snapshot timestamp)."""
+    _need_key(key)
+    data, _ = fetch_json(f"{HIST}/events/{event_id}/odds",
+                         params={"apiKey": key, "date": at_iso, "regions": "us", "markets": ",".join(markets),
+                                 "oddsFormat": "american"}, step=STEP, max_age_h=1e9, offline=offline)
+    ev = data.get("data") or {}
+    rows = []
+    for bk in ev.get("bookmakers", []):
+        for m in bk.get("markets", []):
+            for o in m.get("outcomes", []):
+                rows.append({"event_id": event_id, "book": bk["key"], "market": m["key"],
+                             "stat": PROP_MARKETS.get(m["key"], m["key"]), "player": o.get("description"),
+                             "side": o.get("name"), "line": o.get("point"), "price": o.get("price")})
+    return pd.DataFrame(rows), data.get("timestamp", "")
+
+
 def implied_prob(american) -> float | None:
     try:
         a = float(american)

@@ -33,6 +33,33 @@ class Meta:
         return (time.time() - self.fetched_at) / 3600
 
 
+# Latest Odds API usage, read from its response headers (x-requests-remaining / -used / -last)
+QUOTA: dict = {}
+
+
+def _note_quota(url: str, headers):
+    if "the-odds-api.com" not in url:
+        return
+    try:
+        rem, used, last = (headers.get(h) for h in ("x-requests-remaining", "x-requests-used", "x-requests-last"))
+        if rem is None:
+            return
+        QUOTA.update({"remaining": float(rem), "used": float(used or 0), "last": float(last or 0), "at": time.time()})
+        (CACHE.parent / "odds_quota.json").write_text(json.dumps(QUOTA))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def odds_quota() -> dict:
+    """Last known Odds API credits (from the newest response seen on this computer)."""
+    if QUOTA:
+        return dict(QUOTA)
+    try:
+        return json.loads((CACHE.parent / "odds_quota.json").read_text())
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _key(url: str, params: dict | None) -> str:
     raw = url + json.dumps(params or {}, sort_keys=True, default=str)
     return hashlib.sha1(raw.encode()).hexdigest()[:20]
@@ -66,6 +93,7 @@ def fetch(url: str, *, step: str, params: dict | None = None, max_age_h: float =
         try:
             r = requests.get(url, params=params, timeout=timeout,
                              headers={"User-Agent": UA, "Accept": "application/json, */*", **(headers or {})})
+            _note_quota(url, r.headers)
             if r.status_code == 200:
                 body_p.write_bytes(r.content)
                 meta_p.write_text(json.dumps({"url": url, "params": _redact(params), "fetched_at": time.time()}))

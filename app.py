@@ -152,6 +152,10 @@ with st.sidebar:
     with st.expander("Settings"):
         key = st.text_input("The Odds API key (optional)", S.odds_api_key, type="password",
                             help="Free key at the-odds-api.com — powers live lines and props.")
+        from beatnfl.net import odds_quota as _oq
+        _q = _oq()
+        if _q.get("remaining") is not None:
+            st.caption(f"Odds API credits left this month: **{int(_q['remaining']):,}** (used {int(_q.get('used', 0)):,})")
         fpkey = st.text_input("FantasyPros API key (optional)", S.fantasypros_api_key, type="password",
                               help="Production key from secure.fantasypros.com/api-keys (MVP/HOF). Fills the 'Yours' "
                                    "projection automatically on every Refresh.")
@@ -997,6 +1001,54 @@ with tab_evidence:
         st.caption(f"Average miss on the final margin: market {g['mae_margin']['spread_line']:.2f}, model "
                    f"{g['mae_margin']['model_spread']:.2f} points. On the total: market {g['mae_total']['total_line']:.2f}, "
                    f"model {g['mae_total']['model_total']:.2f}. The market is more accurate.")
+    st.markdown("**Props on real sportsbook lines — does the Picks rule hold up?**")
+    st.caption("Replays a past season with the model as it stood before that season: each prop's real Wednesday-evening "
+               "price and closing price from every US book (Odds API historical data, paid plans). Picks = model differs "
+               "from the midweek market by the threshold, taken at the best midweek price, graded on result and on "
+               "closing-line value. Information only.")
+    from beatnfl import props_backtest as _pb
+    b1, b2, b3 = st.columns([1, 1, 2], vertical_alignment="bottom")
+    bt_season = b1.selectbox("Season", [2025, 2024, 2023], key="bt_season")
+    bt_res = b2.number_input("Keep at least (credits)", 0, 1_000_000, 4000, 500, key="bt_reserve",
+                             help="The test stops before your Odds API credits drop below this, so weekly use is never starved. "
+                                  "Run it again after credits renew — finished parts are never paid for twice.")
+    try:
+        est = _pb.estimate(int(bt_season), offline=offline)
+        _q = _oq()
+        b3.caption(f"{est['games']} games · up to ~{est['credits_max']:,} credits (only markets books actually posted are charged)"
+                   + (f" · you have {int(_q['remaining']):,}" if _q.get("remaining") is not None else ""))
+    except StepError:
+        pass
+    if st.button("Run the props backtest", disabled=not S.odds_api_key):
+        with st.spinner("Rebuilding the model for that season and pulling historical prices (≈10–20 min)…"):
+            try:
+                _pb.run(S.odds_api_key, int(bt_season), reserve=float(bt_res), offline=offline)
+            except StepError as e:
+                st.error(e.as_text())
+    pbf = sorted(glob.glob(str(_H / "evidence" / "props_backtest_*.json")))
+    for f_ in pbf[::-1]:
+        r_ = json.loads(Path(f_).read_text())
+        if not r_.get("n"):
+            st.info(f"{r_.get('season')}: {r_.get('note', 'no data')}")
+            continue
+        head = (f"**{r_['season']}** · {r_['props_matched']:,} props with a model forecast, weeks "
+                f"{min(r_['weeks'])}–{max(r_['weeks'])}" if r_.get("weeks") else f"**{r_['season']}**")
+        if r_.get("status") == "paused":
+            head += " · ⏸ paused by the credit limit — run again after credits renew to finish the season"
+        st.markdown(head)
+        br = r_.get("brier", {})
+        st.caption("Accuracy of the Over chance on every prop (Brier score, lower is better): model "
+                   f"{br.get('model', float('nan')):.4f} · market midweek {br.get('market_midweek', float('nan')):.4f}"
+                   + (f" · market at close {br['market_close']:.4f}" if "market_close" in br else ""))
+        t, tc = tidy(pd.DataFrame([{k: v for k, v in x.items() if k != "by_stat"} for x in r_["picks"]]),
+                     {"threshold": "Model differs by (pts)", "n": "Picks", "won": "Won", "lost": "Lost", "win_rate": "Win %",
+                      "units": "Units", "roi": "ROI %", "clv_avg": "Avg CLV (pts)", "beat_close": "Beat close %"},
+                     ints=("Model differs by (pts)", "Picks", "Won", "Lost"), one=("Win %", "Units", "ROI %", "Beat close %"),
+                     two=("Avg CLV (pts)",))
+        show(t, tc)
+    st.caption("Read it as: positive average CLV and ROI that hold at higher thresholds = a real edge. Break-even at "
+               "-110 is 52.4%. One season is a few hundred picks — treat it as a strong hint, not proof.")
+
     st.markdown("**FantasyPros vs Sleeper vs model — which to trust, by position**")
     st.caption("Scores each source's published weekly projections against what actually happened (the model is "
                "trained only on earlier seasons), then finds the blend with the smallest miss for each position — and, "

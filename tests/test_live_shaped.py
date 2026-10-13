@@ -143,6 +143,16 @@ def test_app_every_button(live, monkeypatch):
     s.odds_api_key, s.yahoo_client_id, s.yahoo_client_secret, s.fantasypros_api_key = "k", "cid", "sec", "fp-key"
     s.save()
     monkeypatch.setattr(update, "check", lambda r, t="": {"sha": "x", "date": "2026-10-12", "message": "test", "update_available": False})
+    # a finished props backtest on disk, so the Evidence section renders its tables
+    from beatnfl import props_backtest as pb
+    import numpy as np
+    rng = np.random.default_rng(3)
+    D = pd.DataFrame({"line": 60.5, "actual": rng.normal(62, 25, 400), "model_p_over": rng.uniform(.3, .7, 400),
+                      "p_over": rng.uniform(.45, .55, 400), "close_p_over": rng.uniform(.45, .55, 400),
+                      "best_over": -105.0, "best_under": -108.0, "stat": "rec_yds"})
+    res = pb.summarize(D) | {"season": 2025, "status": "paused", "weeks": [1, 2, 3], "props_matched": 400}
+    pb.EVID.mkdir(parents=True, exist_ok=True)
+    (pb.EVID / "props_backtest_2025.json").write_text(json.dumps(res, default=str))
     app = Path(__file__).resolve().parent.parent / "app.py"
     at = AppTest.from_file(str(app), default_timeout=600)
     at.run()
@@ -174,6 +184,8 @@ def test_app_every_button(live, monkeypatch):
     run = at.session_state["run"]
     assert any(x.step == "4b. Your projections" and x.status in ("ok", "warn") and "2 of" in x.message for x in run.steps)
     assert any(b.label == "Run the source test (≈10–15 min)" for b in at.button)
+    assert any(b.label == "Run the props backtest" for b in at.button)
+    assert any("paused by the credit limit" in m.value for m in at.markdown)
     s2 = Settings.load()
     assert s2.pos_weights, "Use these weights did not save per-position weights"
     s2.odds_api_key = s2.yahoo_client_id = s2.yahoo_client_secret = s2.fantasypros_api_key = ""

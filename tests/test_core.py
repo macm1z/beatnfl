@@ -761,3 +761,43 @@ def test_no_clv_before_kickoff():
     storage.save_picks(p)
     tbl, _ = research.grade_picks()
     assert tbl[tbl.season == 2099].clv.isna().all()
+
+
+# ---------------------------------------------------------------- props backtest on historical lines (v1.9)
+def test_props_backtest_flow_budget_and_grading(monkeypatch):
+    from beatnfl import props_backtest as pb
+    from beatnfl import net
+    from beatnfl.sources import nflverse as nv, odds
+    sched = pd.DataFrame({"season": [2025] * 2, "game_type": ["REG"] * 2, "week": [1, 2], "home_team": ["ATL", "KC"],
+                          "away_team": ["CHI", "LAC"], "gameday": ["2025-09-07", "2025-09-14"], "gametime": ["13:00", "16:25"]})
+    monkeypatch.setattr(nv, "schedules", lambda **k: sched)
+
+    class PM:
+        def prob_over(self, stat, pred, line):
+            return 0.70 if pred > line else 0.30
+    te = pd.DataFrame({"name": ["Drake London", "Rashee Rice"], "team": ["ATL", "KC"], "week": [1, 2],
+                       "p_rec_yds": [90.0, 40.0], "rec_yds": [101.0, 70.0]})
+    monkeypatch.setattr(pb, "season_model", lambda season, **k: (PM(), te))
+    ev = {1: [{"id": "e1", "home_team": "Atlanta Falcons", "away_team": "Chicago Bears", "commence_time": "2025-09-07T17:00:00Z"}],
+          2: [{"id": "e2", "home_team": "Kansas City Chiefs", "away_team": "Los Angeles Chargers", "commence_time": "2025-09-14T20:25:00Z"}]}
+    monkeypatch.setattr(odds, "hist_events", lambda key, at, **k: ev[1] if at.startswith("2025-09-03") else ev[2])
+
+    def props(key, eid, at, markets, **k):
+        player, line = ("Drake London", 74.5) if eid == "e1" else ("Rashee Rice", 60.5)
+        close = not at.endswith("T23:00:00Z")
+        o, u = ((-130, 110) if close else (-110, -110)) if eid == "e1" else ((-110, -110))
+        rows = [{"event_id": eid, "book": b, "market": "player_reception_yds", "stat": "rec_yds", "player": player,
+                 "side": s, "line": line, "price": p} for b in ("draftkings", "fanduel")
+                for s, p in (("Over", o + (10 if b == "fanduel" and not close else 0)), ("Under", u))]
+        return pd.DataFrame(rows), at
+    monkeypatch.setattr(odds, "hist_props", props)
+    monkeypatch.setitem(net.QUOTA, "remaining", 20000)
+    res = pb.run("k", 2025, ["player_reception_yds"], reserve=4000)
+    assert res["status"] == "complete" and res["props_matched"] == 2
+    p4 = res["picks"][0]
+    assert p4["n"] == 2 and p4["won"] == 1 and p4["lost"] == 1      # London over won (+100 at FanDuel), Rice under lost
+    assert abs(p4["units"] - 0.0) < 0.01
+    assert p4["clv_n"] == 2 and p4["clv_avg"] is not None
+    # the budget guard pauses before spending past the reserve
+    monkeypatch.setitem(net.QUOTA, "remaining", 4010)
+    assert pb.run("k", 2025, ["player_reception_yds"], reserve=4000)["status"] == "paused"

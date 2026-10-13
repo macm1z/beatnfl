@@ -109,6 +109,13 @@ def cmd_close(a):
     storage.log_status("Closing prices", "ok", msg)
 
 
+def cmd_backtest_props(a):
+    from . import props_backtest as pb
+    from .config import Settings
+    res = pb.run(Settings.load().odds_api_key, a.season, reserve=a.reserve, progress=print)
+    print(json.dumps(res, indent=1, default=str))
+
+
 def cmd_update(a):
     from . import update
     from .config import Settings
@@ -143,6 +150,9 @@ def main():
     b.add_argument("--sleeper", action="store_true", help="also compare against Sleeper's historical projections")
     sub.add_parser("grade")
     sub.add_parser("app")
+    bp = sub.add_parser("backtest-props", help="replay the Picks rule on a past season's real prop lines (paid Odds API plan)")
+    bp.add_argument("--season", type=int, default=2025)
+    bp.add_argument("--reserve", type=float, default=4000, help="stop before Odds API credits fall below this")
     mw = sub.add_parser("midweek")
     mw.add_argument("--notify", action="store_true")
     cl = sub.add_parser("close")
@@ -152,7 +162,7 @@ def main():
     u.add_argument("repo", nargs="?", help="owner/name (default: the one in Settings)")
     a = p.parse_args()
     {"run": cmd_run, "doctor": cmd_doctor, "backtest": cmd_backtest, "grade": cmd_grade, "app": cmd_app, "update": cmd_update,
-     "midweek": cmd_midweek, "close": cmd_close}.get(
+     "midweek": cmd_midweek, "close": cmd_close, "backtest-props": cmd_backtest_props}.get(
         a.cmd or "app", cmd_app)(a)
 
 
