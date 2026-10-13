@@ -215,6 +215,14 @@ with st.sidebar:
                 st.info("Restarting… the page reopens in a few seconds.")
             else:
                 st.info("Close the BeatNFL window and start it again to load the update.")
+    from beatnfl import schedule as _sched
+    if _sched.supported():
+        with st.expander("Automatic checks"):
+            st.caption("Runs in the background while your Mac is awake and notifies you: Wednesday 7 PM picks list · "
+                       "game-day lineup check after inactives post · closing prices before kickoffs.")
+            _on = st.toggle("On", value=_sched.installed(), key="auto_checks")
+            if _on != _sched.installed():
+                st.info(_sched.install(_on))
     offline = st.toggle("Offline mode (use cached data only)", False)
 
 # default week for Games / Props
@@ -724,7 +732,6 @@ with tab_props:
 # ------------------------------------------------------------------ PICKS
 with tab_picks:
     from beatnfl import research as _rs
-    from beatnfl import schedule as _sch
     st.warning("**Experimental — no proven edge.** The 2025 backtest on real sportsbook lines found the model adds no "
                "reliable information beyond the books' prices. The one hint was **Unders where the model is 10+ points "
                "below the market** (2025: 53.8% won, ROI +2.1% ± 4.6 — could be luck). Picks logs exactly that rule so "
@@ -805,12 +812,7 @@ with tab_picks:
                      "CLV": st.column_config.NumberColumn("CLV", format="%+.1f", help="Close % − Taken %. Positive = beat the close."),
                      "Units": st.column_config.NumberColumn("Units", format="%+.2f")})
 
-    if _sch.supported():
-        st.subheader("Automatic checks on this Mac")
-        on = st.toggle("Wednesday picks check · game-day lineup check after inactives · closing prices", value=_sch.installed(),
-                       help="Runs in the background while your Mac is awake and shows a notification. Off any time.")
-        if on != _sch.installed():
-            st.info(_sch.install(on))
+    st.caption("Automatic checks (Wednesday picks, game-day lineup check, closing prices) are in the sidebar.")
 
 # ------------------------------------------------------------------ LOAD DATA
 with tab_load:
