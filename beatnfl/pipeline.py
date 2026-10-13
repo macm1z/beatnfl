@@ -335,3 +335,38 @@ def save_lineups(run: WeekRun, out: dict, name: str = "", export_files=True) -> 
     if export_files:
         r["files"] = [export.dk_upload(res.lineups, run.pool, label), export.readable(res.lineups, run.pool, label)]
     return r
+
+
+def lineup_alerts(run: WeekRun) -> pd.DataFrame:
+    """Players in lineup sets saved for this week who are now ruled out (Out / Doubtful / IR) or
+    newly Questionable — checked against the latest statuses, e.g. after Sunday's inactive lists."""
+    if run is None or run.pool is None or not run.season:
+        return pd.DataFrame()
+    sets = storage.list_lineup_sets()
+    if sets.empty:
+        return pd.DataFrame()
+    sets = sets[(sets.season == run.season) & (sets.week == run.week)]
+    # match by player (name/position/team key), not DraftKings ID: a later check may load a different
+    # slate (e.g. the afternoon slate after the main one locks), whose IDs differ
+    cur = run.pool.drop_duplicates("key").set_index("key")
+    rows = []
+    for r in sets.itertuples():
+        d = storage.load_lineup_set(int(r.id))
+        try:
+            _, saved = storage.get_projection_run(d["projection_run_id"])
+        except KeyError:
+            continue
+        sk = saved.set_index("dk_id")
+        for i, lu in enumerate(d["lineups"], 1):
+            for pid in lu:
+                if pid not in sk.index:
+                    continue
+                key = sk.at[pid, "key"]
+                if key in cur.index and str(cur.at[key, "status"]) in ("O", "IR", "D", "Q"):
+                    rows.append({"set": int(r.id), "set_name": r.name, "lineup": i, "dk_id": pid, "player": sk.at[pid, "name"],
+                                 "team": sk.at[pid, "team"], "status": cur.at[key, "status"]})
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    return (out.groupby(["set", "set_name", "dk_id", "player", "team", "status"], as_index=False)
+               .agg(lineups=("lineup", "nunique")).sort_values(["status", "lineups"], ascending=[True, False]))

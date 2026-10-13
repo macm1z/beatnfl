@@ -192,7 +192,7 @@ def duplicate_sets() -> dict[int, int]:
 def list_lineup_sets() -> pd.DataFrame:
     with db() as c:
         rows = c.execute("""SELECT l.id, l.name, l.created_utc, l.updated_utc, l.revision, l.status, s.label AS slate,
-                            s.season, s.week, (SELECT COUNT(*) FROM lineups WHERE set_id=l.id) AS n
+                            s.season, s.week, s.draft_group_id, (SELECT COUNT(*) FROM lineups WHERE set_id=l.id) AS n
                             FROM lineup_sets l JOIN slates s ON s.id=l.slate_id ORDER BY l.id DESC""").fetchall()
     return pd.DataFrame([dict(r) for r in rows])
 

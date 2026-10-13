@@ -845,3 +845,21 @@ def test_book_lines_move_model_projection(monkeypatch):
     assert abs(out.at["1", "proj_lines_adj"] - round(0.8 * 0.1 * 15.2 + 0.5 + exp_td, 2)) < 0.02
     assert out.at["2", "proj_model"] < 16.0                                   # books lower on Bijan's rushing
     assert pd.isna(out.at["3", "proj_lines_adj"]) and out.at["3", "proj_model"] == 8.0
+
+
+def test_lineup_alerts_flag_players_ruled_out_after_saving():
+    from beatnfl import pipeline
+    ls, pool = pool_from_fixture()
+    sid = storage.save_slate(ls, 2026, 6)
+    run_id = storage.save_projection_run(sid, pool, "test", {})
+    r = optimizer.build(pool, optimizer.OptSettings(n_lineups=3, randomness=0))
+    storage.save_lineup_set("alerts", sid, run_id, {}, r.lineups, pool, r.status, r.diagnostics)
+    star = r.lineups[0][0]                                        # the QB in lineup 1
+    later = pool.copy()
+    later.loc[later.dk_id == star, "status"] = "O"                # inactive list posts
+    later["dk_id"] = "x" + later.dk_id                            # and a different slate (new IDs) is loaded
+    run = pipeline.WeekRun.__new__(pipeline.WeekRun)
+    run.pool, run.season, run.week = later, 2026, 6
+    al = pipeline.lineup_alerts(run)
+    hit = al[(al.status == "O") & (al.set_name == "alerts")]
+    assert len(hit) == 1 and hit.iloc[0].dk_id == star and hit.iloc[0].lineups >= 1

@@ -109,6 +109,24 @@ def cmd_close(a):
     storage.log_status("Closing prices", "ok", msg)
 
 
+def cmd_gamecheck(a):
+    """Re-check statuses (after inactive lists post) and flag ruled-out players in this week's saved lineups."""
+    from . import pipeline, schedule, storage
+    from .config import Settings
+    r = pipeline.run_week(Settings.load(), progress=lambda m: None)
+    al = pipeline.lineup_alerts(r)
+    out = al[al.status.isin(["O", "IR", "D"])] if not al.empty else al
+    if out.empty:
+        msg = "No ruled-out players in this week's saved lineups."
+    else:
+        names = ", ".join(f"{x.player} ({x.status}, {x.lineups} lineups)" for x in out.drop_duplicates("dk_id").itertuples())
+        msg = f"Ruled out in your saved lineups: {names}. Rebuild or swap before lock."
+    print(msg)
+    storage.log_status("Game-day check", "warn" if not out.empty else "ok", msg)
+    if a.notify and not out.empty:
+        schedule.notify("BeatNFL game-day check", msg)
+
+
 def cmd_backtest_props(a):
     from . import props_backtest as pb
     from .config import Settings
@@ -153,6 +171,8 @@ def main():
     bp = sub.add_parser("backtest-props", help="replay the Picks rule on a past season's real prop lines (paid Odds API plan)")
     bp.add_argument("--season", type=int, default=2025)
     bp.add_argument("--reserve", type=float, default=4000, help="stop before Odds API credits fall below this")
+    gc = sub.add_parser("gamecheck", help="re-check statuses and flag ruled-out players in saved lineups")
+    gc.add_argument("--notify", action="store_true")
     mw = sub.add_parser("midweek")
     mw.add_argument("--notify", action="store_true")
     cl = sub.add_parser("close")
@@ -162,7 +182,8 @@ def main():
     u.add_argument("repo", nargs="?", help="owner/name (default: the one in Settings)")
     a = p.parse_args()
     {"run": cmd_run, "doctor": cmd_doctor, "backtest": cmd_backtest, "grade": cmd_grade, "app": cmd_app, "update": cmd_update,
-     "midweek": cmd_midweek, "close": cmd_close, "backtest-props": cmd_backtest_props}.get(
+     "midweek": cmd_midweek, "close": cmd_close, "backtest-props": cmd_backtest_props,
+     "gamecheck": cmd_gamecheck}.get(
         a.cmd or "app", cmd_app)(a)
 
 

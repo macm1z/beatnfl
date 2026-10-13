@@ -1,0 +1,59 @@
+{
+ "verdict": "Injury-report features did not improve forecasts overall (each season within \u00b10.01 points); they are not added. Questionable players who played scored ~88% of their projection (2022\u20132025), which supports the 0.90 Questionable haircut.",
+ "rows": [
+  {
+   "Season": 2023,
+   "Model": "Current model",
+   "Miss: all players": 4.571,
+   "Miss: players on the injury report": 5.149
+  },
+  {
+   "Season": 2023,
+   "Model": "+ player's practice/report status",
+   "Miss: all players": 4.581,
+   "Miss: players on the injury report": 5.124
+  },
+  {
+   "Season": 2023,
+   "Model": "+ teammates' Questionable tags",
+   "Miss: all players": 4.581,
+   "Miss: players on the injury report": 5.175
+  },
+  {
+   "Season": 2024,
+   "Model": "Current model",
+   "Miss: all players": 4.659,
+   "Miss: players on the injury report": 5.399
+  },
+  {
+   "Season": 2024,
+   "Model": "+ player's practice/report status",
+   "Miss: all players": 4.656,
+   "Miss: players on the injury report": 5.342
+  },
+  {
+   "Season": 2024,
+   "Model": "+ teammates' Questionable tags",
+   "Miss: all players": 4.661,
+   "Miss: players on the injury report": 5.359
+  },
+  {
+   "Season": 2025,
+   "Model": "Current model",
+   "Miss: all players": 4.51,
+   "Miss: players on the injury report": 5.038
+  },
+  {
+   "Season": 2025,
+   "Model": "+ player's practice/report status",
+   "Miss: all players": 4.508,
+   "Miss: players on the injury report": 4.984
+  },
+  {
+   "Season": 2025,
+   "Model": "+ teammates' Questionable tags",
+   "Miss: all players": 4.516,
+   "Miss: players on the injury report": 5.058
+  }
+ ]
+}

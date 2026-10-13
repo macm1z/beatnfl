@@ -51,6 +51,10 @@ Tabs: **This week** (pool and lineups) · **Saved lineups** (rename, delete, rem
 - **Fallback slate:** if DraftKings blocks the automatic download, drop `DKSalaries.csv` in the inbox. The app uses it automatically and says so. To get it: DraftKings → any NFL Classic contest → Export to CSV.
 - **Odds API key** (free at the-odds-api.com): add it in Settings for live lines and props. Without it, lineups still work.
 
+**Sportsbook lines in the model (step 4d):** with the Odds API key set, each Refresh reads the books' player prop lines (yards, receptions, anytime TD) for the slate and moves the model's DraftKings projection toward them — the *Book lines* column shows by how much. On unseen 2025 weeks the lines out-predicted the model on every yardage stat, and folding them in lowered the DK-points miss. About 5 credits per game, reused for 3 hours. Turn off in Settings.
+
+**Game-day check:** after you save lineups, *This week* flags any player in them who is later ruled out (or Questionable). With Automatic checks on, the Mac re-checks after each inactive list posts (Thu 7 PM, Sun 11:50 AM / 3:10 PM / 7 PM, Mon 7 PM) and notifies you. CLI: `python -m beatnfl gamecheck`. Practice reports were tested as model inputs and did not help (Evidence), so they aren't used.
+
 **Picks (research only, experimental):** the 2025 backtest on real lines found no proven edge for the model on props. The one hint — Unders where the model is 10+ points below the market — is what *Picks → Find this week's picks* now logs (FantasyPros must agree when your key is set), at the best price across books, so the rule is tested on games it has never seen. Each pick is logged at that price and graded after the games: result, units at 1 per pick, and **closing-line value** (your price vs the market's last price before kickoff — the quick, honest test of whether an edge is real). On a Mac, turn on *Automatic checks* to run the list Wednesday 7 PM (with a notification) and record closing prices before Thursday, Sunday and Monday games. Nothing is ever bet. CLI: `python -m beatnfl midweek`, `python -m beatnfl close`.
 
 **Props backtest on real lines (paid Odds API plan):** *Evidence → Props on real sportsbook lines* replays a past season with the model as it stood before that season, using each prop's real Wednesday-evening and closing prices from every US book. It reports the Picks rule's record, ROI and closing-line value at 4/6/8/10-point thresholds. 2025 with pass/rush/receiving yards costs about 16,000 credits; a credit floor (default 4,000) pauses it before weekly use is starved, and a paused run resumes later without paying twice. Credits left show under Settings. CLI: `python -m beatnfl backtest-props --season 2025`.
@@ -134,4 +138,4 @@ Two checks only run on your computer, because their sources were blocked from th
 - `~/BeatNFL/evidence` — test results
 - `~/BeatNFL/beatnfl.log` — technical detail for any failure
 
-Tests: `.venv/bin/python -m pytest -q tests` (43 offline tests; `BEATNFL_FULL=1` adds 6 end-to-end tests that click every button).
+Tests: `.venv/bin/python -m pytest -q tests` (45 offline tests; `BEATNFL_FULL=1` adds 6 end-to-end tests that click every button).

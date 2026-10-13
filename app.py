@@ -270,6 +270,20 @@ with tab_week:
                 "**Load data** tab first.")
     else:
         show_problems(r.steps)
+        try:
+            al = pipeline.lineup_alerts(r)
+        except Exception:  # noqa: BLE001
+            al = pd.DataFrame()
+        if not al.empty:
+            bad = al[al.status.isin(["O", "IR", "D"])].drop_duplicates("dk_id")
+            q = al[al.status == "Q"].drop_duplicates("dk_id")
+            if len(bad):
+                st.error("**Ruled out but in your saved lineups:** " + ", ".join(
+                    f"{x.player} ({STATUS_TXT.get(x.status, x.status)}, set #{x.set}, {x.lineups} lineups)" for x in bad.itertuples())
+                    + ". Rebuild, or swap them on DraftKings before lock.")
+            if len(q):
+                st.warning("Questionable in your saved lineups: " + ", ".join(f"{x.player} (set #{x.set})" for x in q.itertuples())
+                           + ". Check again after inactives post (~90 minutes before kickoff).")
     if r and r.pool is not None and "proj" in r.pool:
         st.subheader("Player pool")
         pool = r.pool.copy()
@@ -793,7 +807,7 @@ with tab_picks:
 
     if _sch.supported():
         st.subheader("Automatic checks on this Mac")
-        on = st.toggle("Wednesday 7 PM picks check + closing prices before each kickoff window", value=_sch.installed(),
+        on = st.toggle("Wednesday picks check · game-day lineup check after inactives · closing prices", value=_sch.installed(),
                        help="Runs in the background while your Mac is awake and shows a notification. Off any time.")
         if on != _sch.installed():
             st.info(_sch.install(on))
@@ -1132,6 +1146,17 @@ with tab_evidence:
             S.pos_weights = ss["live_w"]
             S.save()
             st.success("Saved. Click ⟳ Refresh to apply.")
+    blt = APP_ROOT / "evidence" / "book_lines_test.json"
+    if blt.exists():
+        m_ = json.loads(blt.read_text())
+        st.markdown(f"**Sportsbook lines in the model** — {m_['verdict']}")
+        st.dataframe(pd.DataFrame(m_["rows"]), hide_index=True)
+        st.caption(m_["note"] + " For DK points the 'book line' column is the model with the lines folded in.")
+    iab = APP_ROOT / "evidence" / "injury_ab_test.json"
+    if iab.exists():
+        m_ = json.loads(iab.read_text())
+        st.markdown(f"**Practice reports as model inputs** — {m_['verdict']}")
+        st.dataframe(pd.DataFrame(m_["rows"]), hide_index=True)
     mab = APP_ROOT / "evidence" / "matchup_ab_test.json"
     if mab.exists():
         m = json.loads(mab.read_text())

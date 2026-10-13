@@ -1,0 +1,30 @@
+{
+ "verdict": "Sportsbook prop lines are better stat forecasts than the model on unseen 2025 weeks, so the model's projection is moved toward them (step 4d).",
+ "rows": [
+  {
+   "Stat": "Pass yds",
+   "Miss: model": 58.71,
+   "Miss: book line": 54.54,
+   "Line weight used": 0.8
+  },
+  {
+   "Stat": "Rush yds",
+   "Miss: model": 20.35,
+   "Miss: book line": 19.48,
+   "Line weight used": 0.8
+  },
+  {
+   "Stat": "Rec yds",
+   "Miss: model": 22.69,
+   "Miss: book line": 21.72,
+   "Line weight used": 0.8
+  },
+  {
+   "Stat": "DK points (players with a line)",
+   "Miss: model": 6.03,
+   "Miss: book line": 5.956,
+   "Line weight used": 0.8
+  }
+ ],
+ "note": "2025 weeks 9\u201315 (928 player-games), model trained on earlier seasons; line weights and shifts fitted on weeks 1\u20138."
+}
