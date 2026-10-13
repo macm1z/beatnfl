@@ -250,8 +250,8 @@ if refresh:
     ss["run_at"] = pd.Timestamp.now(tz="America/New_York").strftime("%a %-I:%M %p")
     st.rerun()
 
-tab_week, tab_saved, tab_games, tab_props, tab_yahoo, tab_evidence, tab_load, tab_status = st.tabs(
-    ["This week", "Saved lineups", "Games", "Props", "My Yahoo team", "Evidence", "Load data", "Data status"])
+tab_week, tab_saved, tab_games, tab_props, tab_picks, tab_yahoo, tab_evidence, tab_load, tab_status = st.tabs(
+    ["This week", "Saved lineups", "Games", "Props", "Picks", "My Yahoo team", "Evidence", "Load data", "Data status"])
 
 # ------------------------------------------------------------------ THIS WEEK
 with tab_week:
@@ -695,6 +695,95 @@ with tab_props:
             st.caption("\\* Anytime TD is quoted on one side only, so its Book % still includes the margin and runs high. "
                        "**no forecast** = player ruled out or too little history. Click any column header to sort. "
                        "Information only.")
+
+# ------------------------------------------------------------------ PICKS
+with tab_picks:
+    from beatnfl import research as _rs
+    from beatnfl import schedule as _sch
+    st.caption("A research list, not betting advice. Props where the model differs from the market by 4+ points "
+               "**and** FantasyPros points the same way, with the best price across books. Every pick is logged with "
+               "that price, then graded against the closing line and the result — the evidence for whether these "
+               "edges are real.")
+    season_k, week_k = int(ss.get("p_season")), int(ss.get("p_week"))
+    c1, c2 = st.columns([1.4, 3], vertical_alignment="center")
+    find = c1.button("🔎 Find this week's picks", type="primary", width="stretch", disabled=not S.odds_api_key)
+    c2.caption(f"{season_k} week {week_k} (change the week on the Props tab). Uses about 5 Odds API credits per game."
+               if S.odds_api_key else "Needs an Odds API key in Settings.")
+    if find:
+        with st.spinner("Forecasting, pulling props from every book, comparing with FantasyPros…"):
+            try:
+                ss["picks"], ss["picks_info"] = _rs.build_midweek(S, season_k, week_k, offline=offline)
+                ss.pop("pick_grades", None)
+            except StepError as e:
+                st.error(e.as_text())
+    pk_ = ss.get("picks")
+    if pk_ is not None:
+        inf = ss.get("picks_info", {})
+        if pk_.empty:
+            st.info(f"No props met the bar for week {inf.get('week')} ({inf.get('fp_note')}). Books post most props "
+                    "2–4 days before kickoff; try again Wednesday or Thursday.")
+        else:
+            st.success(f"{len(pk_)} props flagged · {inf.get('new', 0)} newly logged · {inf.get('fp_note')}")
+            show(_rs.picks_view(pk_), {
+                "Best odds": st.column_config.NumberColumn("Best odds", format="%+d", help="Best price for this side across all books right now."),
+                "Market %": st.column_config.NumberColumn("Market %", format="%.0f%%", help="All books' consensus chance for this side, margin removed."),
+                "Model %": st.column_config.NumberColumn("Model %", format="%.0f%%", help="BeatNFL's chance for this side."),
+                "FantasyPros": st.column_config.NumberColumn("FantasyPros", format="%.1f", help="FantasyPros' projection for the stat (TD: chance 0–1)."),
+                "Model median": st.column_config.NumberColumn("Model median", format="%.1f"),
+                "Edge at best price %": st.column_config.NumberColumn("Edge at best price %", format="%+.1f",
+                    help="What the best price is worth against the market's own fair chance. Positive = this book pays more than the market thinks it should.")},
+                 height=min(700, 38 + 35 * len(pk_)))
+
+    st.subheader("Track record")
+    st.caption("**CLV (closing-line value)** = how much better your logged price was than the market's last price before "
+               "kickoff, in percentage points. Consistently positive CLV is the sign of a real edge — it shows up within "
+               "weeks, long before win/loss records mean anything.")
+    g1, g2, g3 = st.columns([1.2, 1.6, 2.2], vertical_alignment="bottom")
+    if g1.button("Grade picks", width="stretch"):
+        with st.spinner("Grading…"):
+            ss["pick_grades"] = _rs.grade_picks(offline=offline)
+    hrs = g3.number_input("Games starting within (hours)", 1, 96, 4)
+    if g2.button("Record closing prices now", width="stretch", disabled=not S.odds_api_key,
+                 help="Pulls current prices for logged picks whose games start within the hours set. "
+                      "The automatic Mac check does this before each kickoff window."):
+        try:
+            r_ = _rs.capture_close(S.odds_api_key, within_h=float(hrs), offline=offline)
+            st.success(f"Recorded prices for {r_['games']} game(s) ({r_['credits']} credits).")
+        except StepError as e:
+            st.error(e.as_text())
+    gr = ss.get("pick_grades")
+    if gr:
+        tbl, sm = gr
+        if not sm.get("n"):
+            st.info("No picks logged yet — click **Find this week's picks**.")
+        else:
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Logged", sm["n"], help="Picks logged so far")
+            m2.metric("Record", f"{sm['won']}-{sm['lost']}-{sm['push']}" if sm["graded"] else "—",
+                      help="Won-lost-push for finished games")
+            m3.metric("Units", f"{sm['units']:+.2f}" if sm["graded"] else "—",
+                      help="Profit at the logged price, 1 unit per pick" + (f" · ROI {sm['roi']:+.1f}%" if sm.get("roi") is not None else ""))
+            m4.metric("Avg CLV", f"{sm['clv_avg']:+.1f} pts" if sm.get("clv_avg") is not None else "—",
+                      help=(f"Beat the close {sm['beat_close']:.0f}% of the time ({sm['clv_n']} picks with a closing price)"
+                            if sm.get("clv_n") else "No closing prices recorded yet"))
+            v = pd.DataFrame({
+                "Week": tbl.week, "Game": tbl.game, "Player": tbl.player,
+                "Prop": [("Anytime TD" if s_ == "any_td" else f"{_rs.STAT_NAMES.get(s_, s_)} {l_:g}") for s_, l_ in zip(tbl.stat, tbl.line)],
+                "Side": tbl.side, "Odds": tbl.price.round(), "Book": tbl.book.map(_rs.book_name),
+                "Taken %": (tbl.taken_p * 100).round(1), "Close %": (tbl.close_p * 100).round(1), "CLV": tbl.clv,
+                "Actual": tbl.actual, "Result": tbl.result, "Units": tbl.units.round(2)})
+            show(v, {"Odds": st.column_config.NumberColumn("Odds", format="%+d"),
+                     "Taken %": st.column_config.NumberColumn("Taken %", format="%.1f%%", help="Chance implied by the logged price"),
+                     "Close %": st.column_config.NumberColumn("Close %", format="%.1f%%", help="Market's fair chance at the close"),
+                     "CLV": st.column_config.NumberColumn("CLV", format="%+.1f", help="Close % − Taken %. Positive = beat the close."),
+                     "Units": st.column_config.NumberColumn("Units", format="%+.2f")})
+
+    if _sch.supported():
+        st.subheader("Automatic checks on this Mac")
+        on = st.toggle("Wednesday 7 PM picks check + closing prices before each kickoff window", value=_sch.installed(),
+                       help="Runs in the background while your Mac is awake and shows a notification. Off any time.")
+        if on != _sch.installed():
+            st.info(_sch.install(on))
 
 # ------------------------------------------------------------------ LOAD DATA
 with tab_load:

@@ -51,6 +51,8 @@ Tabs: **This week** (pool and lineups) · **Saved lineups** (rename, delete, rem
 - **Fallback slate:** if DraftKings blocks the automatic download, drop `DKSalaries.csv` in the inbox. The app uses it automatically and says so. To get it: DraftKings → any NFL Classic contest → Export to CSV.
 - **Odds API key** (free at the-odds-api.com): add it in Settings for live lines and props. Without it, lineups still work.
 
+**Picks (research only):** *Picks → Find this week's picks* lists props where the model differs from the market by 4+ points **and** FantasyPros points the same way, with the best price across books. Each pick is logged at that price and graded after the games: result, units at 1 per pick, and **closing-line value** (your price vs the market's last price before kickoff — the quick, honest test of whether an edge is real). On a Mac, turn on *Automatic checks* to run the list Wednesday 7 PM (with a notification) and record closing prices before Thursday, Sunday and Monday games. Nothing is ever bet. CLI: `python -m beatnfl midweek`, `python -m beatnfl close`.
+
 **Yahoo (optional, read-only):** the **My Yahoo team** tab walks through a one-time setup. Create a Yahoo app with Redirect URI `oob` and Fantasy Sports Read access, paste the keys in Settings, sign in, then paste the code Yahoo shows you. After that:
 - My Yahoo team shows your roster with projections and start/sit suggestions.
 - Yahoo's injury tags join DraftKings' and Sleeper's in every run; the most serious status wins.
@@ -130,4 +132,4 @@ Two checks only run on your computer, because their sources were blocked from th
 - `~/BeatNFL/evidence` — test results
 - `~/BeatNFL/beatnfl.log` — technical detail for any failure
 
-Tests: `.venv/bin/python -m pytest -q tests` (37 offline tests; `BEATNFL_FULL=1` adds 5 end-to-end tests that click every button).
+Tests: `.venv/bin/python -m pytest -q tests` (41 offline tests; `BEATNFL_FULL=1` adds 6 end-to-end tests that click every button).

@@ -108,6 +108,19 @@ def test_research_all_sources(live):
     assert n > 50 and (fc2.p_rec_yds != fc.p_rec_yds).sum() > 20
 
 
+def test_midweek_picks_end_to_end(live):
+    from beatnfl import research, storage
+    from beatnfl.config import Settings
+    s = Settings(odds_api_key="k", fantasypros_api_key="fp-key")
+    picks, info = research.build_midweek(s, 2026, 6)
+    assert info["season"] == 2026 and info["week"] == 6 and "FantasyPros" in info["fp_note"]
+    loose, _ = research.build_midweek(Settings(odds_api_key="k"), 2026, 6)          # model-only list is a superset
+    assert len(loose) >= len(picks) and len(loose) > 0
+    assert len(storage.picks()) >= len(loose)
+    tbl, sm = research.grade_picks()
+    assert sm["n"] == len(storage.picks())
+
+
 def test_source_compare_end_to_end(live):
     """FantasyPros vs Sleeper vs model on completed 2026 weeks (stand-in FantasyPros/Sleeper numbers)."""
     from beatnfl import backtest
@@ -136,7 +149,7 @@ def test_app_every_button(live, monkeypatch):
     assert not at.exception, [e.value for e in at.exception]
     labels = ["⟳ Refresh", "⚙ Build lineups", "💾 Save", "Load roster & projections", "Load matchups",
               "Forecast every player this week", "Load props", "Grade frozen forecasts", "Grade live weights", "Copy diagnostics", "Check for updates",
-              "Use these weights", "⟳ Refresh"]
+              "🔎 Find this week's picks", "Grade picks", "Record closing prices now", "Use these weights", "⟳ Refresh"]
     at.text_area(key="pasted_proj").input("Player\tTeam\tPos\tProj\nJosh Allen\tBUF\tQB\t24.9\nPuka Nacua\tLAR\tWR\t21.0\n")
     for lab in labels:
         btn = [b for b in at.button if b.label == lab]

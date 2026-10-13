@@ -32,6 +32,14 @@ CREATE TABLE IF NOT EXISTS quotes(
   player TEXT, side TEXT, line REAL, price REAL, source_ts TEXT, retrieved_utc TEXT,
   model_pred REAL, model_p_over REAL, model_version TEXT,
   UNIQUE(event_id, book, market, player, side, line, source_ts));
+CREATE TABLE IF NOT EXISTS prop_prices(
+  event_id TEXT, book TEXT, market TEXT, player TEXT, side TEXT, line REAL, price REAL, source_ts TEXT, retrieved_utc TEXT,
+  UNIQUE(event_id, book, market, player, side, line, source_ts));
+CREATE TABLE IF NOT EXISTS picks(
+  id INTEGER PRIMARY KEY, created_utc TEXT, season INT, week INT, game TEXT, event_id TEXT, commence TEXT,
+  player TEXT, stat TEXT, market TEXT, line REAL, side TEXT, book TEXT, price REAL, market_p REAL, model_p REAL,
+  fp_proj REAL, model_median REAL, source TEXT,
+  UNIQUE(season, week, player, stat, line, side));
 CREATE TABLE IF NOT EXISTS data_status(
   source TEXT PRIMARY KEY, last_attempt_utc TEXT, last_ok_utc TEXT, status TEXT, message TEXT);
 """
@@ -237,6 +245,60 @@ def quotes(kind: str | None = None) -> pd.DataFrame:
         q = "SELECT * FROM quotes" + (" WHERE kind=?" if kind else "")
         rows = c.execute(q, (kind,) if kind else ()).fetchall()
     return pd.DataFrame([dict(r) for r in rows])
+
+
+def save_prop_prices(df: pd.DataFrame) -> int:
+    """Raw prop prices, both sides, every time props are pulled — the record closing prices are read from."""
+    if df is None or df.empty:
+        return 0
+    n = 0
+    with db() as c:
+        for r in df.itertuples():
+            line = None if pd.isna(r.line) else float(r.line)
+            cur = c.execute("INSERT OR IGNORE INTO prop_prices VALUES(?,?,?,?,?,?,?,?,?)",
+                            (r.event_id, r.book, r.market, r.player, r.side, line, r.price, r.source_ts, now()))
+            n += cur.rowcount
+    return n
+
+
+def prop_prices(event_ids: list[str] | None = None) -> pd.DataFrame:
+    with db() as c:
+        if event_ids:
+            q = f"SELECT * FROM prop_prices WHERE event_id IN ({','.join('?' * len(event_ids))})"
+            rows = c.execute(q, list(event_ids)).fetchall()
+        else:
+            rows = c.execute("SELECT * FROM prop_prices").fetchall()
+    return pd.DataFrame([dict(r) for r in rows])
+
+
+# ------------------------------------------------------------- picks (research log, not bets)
+PICK_COLS = ["season", "week", "game", "event_id", "commence", "player", "stat", "market", "line", "side", "book", "price",
+             "market_p", "model_p", "fp_proj", "model_median", "source"]
+
+
+def save_picks(df: pd.DataFrame) -> int:
+    """Log flagged props. The first price seen for a pick is kept (that's the price that gets graded)."""
+    if df is None or df.empty:
+        return 0
+    n = 0
+    with db() as c:
+        for r in df.to_dict("records"):
+            vals = [None if (isinstance(r.get(k), float) and pd.isna(r.get(k))) else r.get(k) for k in PICK_COLS]
+            cur = c.execute(f"INSERT OR IGNORE INTO picks(created_utc,{','.join(PICK_COLS)}) VALUES(?{',?' * len(PICK_COLS)})",
+                            [now()] + vals)
+            n += cur.rowcount
+    return n
+
+
+def picks() -> pd.DataFrame:
+    with db() as c:
+        rows = c.execute("SELECT * FROM picks ORDER BY season, week, commence, game, player").fetchall()
+    return pd.DataFrame([dict(r) for r in rows])
+
+
+def delete_picks(ids: list[int]):
+    with db() as c:
+        c.executemany("DELETE FROM picks WHERE id=?", [(int(i),) for i in ids])
 
 
 # ------------------------------------------------------------- data status

@@ -674,3 +674,90 @@ def test_fantasypros_stats_mix_into_forecasts():
     fp["key"] = [match_key(n, p, t) for n, p, t in zip(fp.name, fp.pos, fp.team)]
     out, n = research.blend_fp_stats(fc, fp, {"rec_yds": 0.5, "rush_yds": 0.4})
     assert n == 1 and out.p_rec_yds.tolist() == [80.0, 30.0] and out.p_rush_yds.iloc[1] == 80.0
+
+
+# ---------------------------------------------------------------- midweek picks + CLV (v1.8)
+def _board_rows():
+    rows = []
+    # Drake London rec yds 74.5: model 63% vs market ~52% → Over; best price is FanDuel +105
+    for bk, ov, un in (("draftkings", -115, -105), ("fanduel", 105, -125), ("betmgm", -110, -110)):
+        rows.append({"game": "CHI @ ATL", "player": "Drake London", "stat": "rec_yds", "market": "player_reception_yds",
+                     "book": bk, "line": 74.5, "price": ov, "under_price": un, "model_pred": 85.0, "model_median": 82.0,
+                     "book_p_over": odds_nv(ov, un), "model_p_over": 0.63, "event_id": "e1", "commence": "2026-10-18T17:00:00Z"})
+    # Bijan rush yds 80.5: model says Under (38% over vs 50%)
+    for bk, ov, un in (("draftkings", -110, -110), ("fanduel", -112, -108)):
+        rows.append({"game": "CHI @ ATL", "player": "Bijan Robinson", "stat": "rush_yds", "market": "player_rush_yds",
+                     "book": bk, "line": 80.5, "price": ov, "under_price": un, "model_pred": 70.0, "model_median": 69.0,
+                     "book_p_over": odds_nv(ov, un), "model_p_over": 0.38, "event_id": "e1", "commence": "2026-10-18T17:00:00Z"})
+    # Kyle Pitts rec 4.5: model only 2 pts off → not flagged
+    rows.append({"game": "CHI @ ATL", "player": "Kyle Pitts", "stat": "rec", "market": "player_receptions", "book": "draftkings",
+                 "line": 4.5, "price": -110, "under_price": -110, "model_pred": 4.6, "model_median": 4.5,
+                 "book_p_over": 0.5, "model_p_over": 0.52, "event_id": "e1", "commence": "2026-10-18T17:00:00Z"})
+    return pd.DataFrame(rows)
+
+
+def odds_nv(o, u):
+    from beatnfl.sources.odds import implied_prob, no_vig
+    return no_vig(implied_prob(o), implied_prob(u))
+
+
+def test_midweek_picks_need_fantasypros_agreement_and_take_best_price():
+    from beatnfl import research
+    b = _board_rows()
+    fp_yes = pd.DataFrame({"name": ["Drake London", "Bijan Robinson"], "pos": ["WR", "RB"], "fp_rec_yds": [80.0, None],
+                           "fp_rush_yds": [None, 72.0]})
+    p = research.midweek_picks(b, fp_yes)
+    assert set(p.player) == {"Drake London", "Bijan Robinson"}             # Pitts below the 4-point bar
+    dl = p[p.player == "Drake London"].iloc[0]
+    assert dl.side == "Over" and dl.book == "fanduel" and dl.price == 105    # best price across books
+    bj = p[p.player == "Bijan Robinson"].iloc[0]
+    assert bj.side == "Under" and bj.book == "fanduel" and bj.price == -108
+    fp_no = fp_yes.assign(fp_rec_yds=[70.0, None])                           # FantasyPros disagrees on London
+    assert "Drake London" not in set(research.midweek_picks(b, fp_no).player)
+    assert len(research.midweek_picks(b, None)) == 2                         # no FantasyPros key → model only
+    v = research.picks_view(p)
+    assert {"Best odds", "Book", "Market %", "Model %", "Edge at best price %"} <= set(v.columns)
+
+
+def test_picks_logged_once_and_graded_with_clv(monkeypatch):
+    from beatnfl import research
+    from beatnfl.models import features
+    p = research.midweek_picks(_board_rows(), None).assign(season=2026, week=6, commence="2026-10-11T17:00:00Z")
+    assert storage.save_picks(p) == 2 and storage.save_picks(p) == 0        # first price kept, no duplicates
+    # closing prices: London moved to -130 over everywhere (we took +105 → beat the close)
+    close = pd.DataFrame([{"event_id": "e1", "book": bk, "market": "player_reception_yds", "player": "Drake London",
+                           "side": sd, "line": 74.5, "price": pr, "source_ts": f"t{bk}{sd}"}
+                          for bk in ("draftkings", "fanduel") for sd, pr in (("Over", -130), ("Under", 110))])
+    storage.save_prop_prices(close)
+    with storage.db() as c:   # mark them as seen before kickoff
+        c.execute("UPDATE prop_prices SET retrieved_utc='2026-10-11T15:00:00+00:00'")
+    stats = pd.DataFrame({"name": ["Drake London", "Bijan Robinson"], "season": [2026, 2026], "week": [6, 6],
+                          "rec_yds": [91.0, 10.0], "rush_yds": [0.0, 95.0], "any_td": [0, 1]})
+    monkeypatch.setattr(research.nv, "weekly_stats", lambda *a, **k: stats)
+    monkeypatch.setattr(features, "tidy_stats", lambda d: d)
+    tbl, sm = research.grade_picks()
+    dl = tbl[tbl.player == "Drake London"].iloc[0]
+    assert dl.result == "won" and abs(dl.units - 1.05) < 1e-9 and dl.clv > 5   # ~55% close vs 48.8% taken
+    bj = tbl[tbl.player == "Bijan Robinson"].iloc[0]
+    assert bj.result == "lost" and bj.units == -1 and pd.isna(bj.clv)          # no closing price recorded
+    assert sm["won"] == 1 and sm["lost"] == 1 and sm["clv_n"] == 1 and sm["beat_close"] == 100.0
+
+
+def test_mac_schedule_plists():
+    from beatnfl import schedule
+    p = schedule.plist("com.beatnfl.midweek")
+    assert p["ProgramArguments"][-3:] == ["beatnfl", "midweek", "--notify"]
+    assert p["StartCalendarInterval"] == [{"Weekday": 3, "Hour": 19, "Minute": 0}]
+    c = schedule.plist("com.beatnfl.close")
+    assert {t["Weekday"] for t in c["StartCalendarInterval"]} == {0, 1, 4}
+    import plistlib
+    assert plistlib.loads(plistlib.dumps(p))["Label"] == "com.beatnfl.midweek"
+
+
+def test_no_clv_before_kickoff():
+    from beatnfl import research
+    p = research.midweek_picks(_board_rows(), None).assign(season=2099, week=1, commence="2099-09-10T17:00:00Z",
+                                                            player=lambda d: d.player + " Future")
+    storage.save_picks(p)
+    tbl, _ = research.grade_picks()
+    assert tbl[tbl.season == 2099].clv.isna().all()

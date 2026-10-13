@@ -5,6 +5,8 @@
   python -m beatnfl doctor       test every data source from this computer and explain failures
   python -m beatnfl backtest     rerun the historical tests (writes ~/BeatNFL/evidence/)
   python -m beatnfl grade        grade frozen pregame projections and stored props against results
+  python -m beatnfl midweek      build and log this week's props picks list (research only)
+  python -m beatnfl close        record closing prices for logged picks whose games start soon
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ def cmd_run(a):
     o = OptSettings(n_lineups=a.n or s.n_lineups, min_salary=s.min_salary, max_exposure=s.max_exposure,
                     min_unique=s.min_unique, stack_min=s.stack_min, bring_back=s.bring_back, randomness=s.randomness,
                     no_offense_vs_dst=s.no_offense_vs_dst)
-    out = pipeline.build_lineups(r, o)
+    out = pipeline.build_lineups(r, o, save=True, export_files=True)
     res = out["result"]
     print(f"\nLineups: requested {res.requested}, generated {len(res.lineups)} ({res.status}, {res.elapsed}s)")
     for d in res.diagnostics:
@@ -68,6 +70,45 @@ def cmd_grade(a):
         print("Suggested blend weights from graded weeks:", w, "(set them in Settings)")
 
 
+def cmd_midweek(a):
+    from . import research, schedule, storage
+    from .config import Settings
+    from .errors import StepError
+    try:
+        picks, info = research.build_midweek(Settings.load(), progress=print)
+    except StepError as e:
+        print(e.as_text())
+        storage.log_status("Midweek picks", "fail", e.what)
+        if a.notify:
+            schedule.notify("BeatNFL midweek check", "Didn't run: " + e.what)
+        sys.exit(1)
+    msg = (f"{info['n']} props flagged for {info['season']} week {info['week']} ({info['new']} new; {info['fp_note']})."
+           if info["n"] else f"No props met the bar for week {info['week']} yet.")
+    print(msg)
+    if len(picks):
+        print(research.picks_view(picks).head(15).to_string(index=False))
+    storage.log_status("Midweek picks", "ok", msg)
+    if a.notify:
+        top = "; ".join(f"{r.player} {r.side} {r.line:g}" for r in picks.head(3).itertuples()) if len(picks) else ""
+        schedule.notify("BeatNFL midweek check", msg + (f" Top: {top}" if top else "") + " Open BeatNFL → Picks.")
+
+
+def cmd_close(a):
+    from . import research, storage
+    from .config import Settings
+    from .errors import StepError
+    s = Settings.load()
+    try:
+        r = research.capture_close(s.odds_api_key, within_h=a.hours, progress=print)
+    except StepError as e:
+        print(e.as_text())
+        storage.log_status("Closing prices", "fail", e.what)
+        sys.exit(1)
+    msg = f"Closing prices recorded for {r['games']} game(s) ({r['credits']} Odds API credits)."
+    print(msg)
+    storage.log_status("Closing prices", "ok", msg)
+
+
 def cmd_update(a):
     from . import update
     from .config import Settings
@@ -102,10 +143,16 @@ def main():
     b.add_argument("--sleeper", action="store_true", help="also compare against Sleeper's historical projections")
     sub.add_parser("grade")
     sub.add_parser("app")
+    mw = sub.add_parser("midweek")
+    mw.add_argument("--notify", action="store_true")
+    cl = sub.add_parser("close")
+    cl.add_argument("--notify", action="store_true")
+    cl.add_argument("--hours", type=float, default=4.0, help="games starting within this many hours")
     u = sub.add_parser("update")
     u.add_argument("repo", nargs="?", help="owner/name (default: the one in Settings)")
     a = p.parse_args()
-    {"run": cmd_run, "doctor": cmd_doctor, "backtest": cmd_backtest, "grade": cmd_grade, "app": cmd_app, "update": cmd_update}.get(
+    {"run": cmd_run, "doctor": cmd_doctor, "backtest": cmd_backtest, "grade": cmd_grade, "app": cmd_app, "update": cmd_update,
+     "midweek": cmd_midweek, "close": cmd_close}.get(
         a.cmd or "app", cmd_app)(a)
 
 

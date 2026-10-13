@@ -12,6 +12,8 @@ so DK points are computed here from the projected stats with BeatNFL's DK scorin
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 from ..errors import StepError
@@ -111,6 +113,9 @@ def projections(key: str, season: int, week: int, offline=False) -> tuple[pd.Dat
                 for k, names in STAT_KEYS.items():
                     v = next((st[n] for n in names if st.get(n) is not None), None)
                     row[f"fp_{k}"] = float(v) if v is not None else None
+                # anytime-TD chance from their expected rushing + receiving TDs (Poisson)
+                tds = _pick(st, ("rush_tds", "rush_td")) + _pick(st, ("rec_tds", "rec_td"))
+                row["fp_any_td"] = round(1 - math.exp(-tds), 3) if tds > 0 else None
             rows.append(row)
     df = pd.DataFrame(rows)
     if df.empty:

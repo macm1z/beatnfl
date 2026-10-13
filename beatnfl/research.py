@@ -177,8 +177,10 @@ def props_board(key: str, season: int, week: int, fc: pd.DataFrame, pm, markets=
         info["credits_est"] += len(markets)
         if p.empty:
             continue
+        storage.save_prop_prices(p)  # both sides, every pull — closing prices are read from these
         p = match_props(p, fc, h, a)
         p["game"] = f"{a} @ {h}"
+        p["commence"] = e.get("commence_time", "")
         rows.append(p)
     if not rows:
         raise StepError("Props", "No prop markets were returned for this week's games yet.",
@@ -203,7 +205,7 @@ def props_board(key: str, season: int, week: int, fc: pd.DataFrame, pm, markets=
     b["model_lean"] = np.where(b.edge > 0, "Over", np.where(b.edge < 0, "Under", ""))
     storage.save_quotes(b.rename(columns={}), "prop", season, week, model_version=getattr(pm, "version", ""))
     cols = ["game", "player", "stat", "book", "line", "price", "under_price", "model_pred", "model_median", "book_p_over",
-            "model_p_over", "edge", "model_lean", "source_ts"]
+            "model_p_over", "edge", "model_lean", "source_ts", "event_id", "commence", "market"]
     return b[cols].sort_values(["game", "player", "stat", "book"]).reset_index(drop=True), info
 
 
@@ -378,3 +380,224 @@ def blend_fp_stats(fc: pd.DataFrame, fp: pd.DataFrame, weights: dict) -> tuple[p
         f.loc[idx, col] = (1 - w) * f.loc[idx, col] + w * v[ok]
     f["fp_blended"] = hit
     return f.drop(columns="_key"), int(hit.sum())
+
+
+# ------------------------------------------------------------------ midweek picks + closing-line grading
+MIN_DIFF = 4.0   # percentage points the model must differ from the market (same threshold as "Lean")
+
+
+def _dec(american) -> float:
+    a = float(american)
+    return 1 + (a / 100 if a > 0 else 100 / -a)
+
+
+def midweek_picks(board: pd.DataFrame, fp: pd.DataFrame | None = None, min_diff: float = MIN_DIFF,
+                  need_fp: bool = True) -> pd.DataFrame:
+    """Props where the model differs from the market by min_diff+ points and (when FantasyPros numbers
+    are available) FantasyPros points the same way. One row per prop with the best price across books.
+    Information only — a research list to track against the closing line, not betting advice."""
+    if board is None or board.empty:
+        return pd.DataFrame()
+    b = board.copy()
+    fpi = None
+    if fp is not None and not fp.empty:
+        f = fp[fp.pos != "DST"].assign(nn=lambda d: d.name.map(norm_name)).drop_duplicates("nn", keep=False)
+        fpi = f.set_index("nn")
+    rows = []
+    for (game, player, stat, line), g in b.groupby(["game", "player", "stat", "line"], dropna=False):
+        mp = g.model_p_over.iloc[0]
+        bp = float(g.book_p_over.median())
+        if pd.isna(mp) or pd.isna(bp):
+            continue
+        diff = (mp - bp) * 100
+        td = stat == "any_td"
+        if abs(diff) < min_diff or (td and diff < 0):
+            continue                       # a TD "No" lean is mostly the book's one-sided margin
+        side = ("Yes" if td else "Over") if diff > 0 else "Under"
+        # FantasyPros direction
+        fp_val, agrees = np.nan, None
+        if fpi is not None:
+            nn = norm_name(player)
+            col = f"fp_{stat}"
+            if nn in fpi.index and col in fpi.columns and pd.notna(fpi.at[nn, col]):
+                fp_val = float(fpi.at[nn, col])
+                ref = bp if td else line
+                agrees = (fp_val > ref) if side in ("Over", "Yes") else (fp_val < ref)
+        if need_fp and fpi is not None and not agrees:
+            continue
+        # best price for the side across books at this exact line
+        prices = g.price if side in ("Over", "Yes") else g.under_price
+        ok = prices.notna()
+        if not ok.any():
+            continue
+        best_i = prices[ok].map(_dec).idxmax()
+        price = float(prices[best_i])
+        m_side = bp if side in ("Over", "Yes") else 1 - bp
+        mo_side = mp if side in ("Over", "Yes") else 1 - mp
+        dec = _dec(price)
+        rows.append({"game": game, "event_id": g.event_id.iloc[0] if "event_id" in g else "",
+                     "commence": g.commence.iloc[0] if "commence" in g else "", "player": player, "stat": stat,
+                     "market": g.market.iloc[0] if "market" in g else "", "line": line, "side": side,
+                     "book": g.book[best_i], "price": price, "market_p": round(m_side, 4), "model_p": round(mo_side, 4),
+                     "fp_proj": fp_val, "model_median": g.model_median.iloc[0] if "model_median" in g else np.nan,
+                     "fp_agrees": agrees, "edge_market": round((m_side * dec - 1) * 100, 1),
+                     "edge_model": round((mo_side * dec - 1) * 100, 1), "diff": round(abs(diff), 1),
+                     "source": "model+FantasyPros" if agrees else "model"})
+    out = pd.DataFrame(rows)
+    return out.sort_values("diff", ascending=False).reset_index(drop=True) if not out.empty else out
+
+
+def picks_view(p: pd.DataFrame) -> pd.DataFrame:
+    """Readable midweek list."""
+    if p is None or p.empty:
+        return pd.DataFrame()
+    kick = pd.to_datetime(p.commence, utc=True, errors="coerce").dt.tz_convert("America/New_York")
+    return pd.DataFrame({
+        "Game": p.game, "Kickoff": [k.strftime("%a %-I:%M %p") if pd.notna(k) else "" for k in kick],
+        "Player": p.player,
+        "Prop": [("Anytime TD" if s == "any_td" else f"{STAT_NAMES.get(s, s)} {l:g}") for s, l in zip(p.stat, p.line)],
+        "Side": p.side, "Best odds": p.price.round(), "Book": p.book.map(book_name),
+        "Market %": (p.market_p * 100).round(1), "Model %": (p.model_p * 100).round(1),
+        "FantasyPros": p.fp_proj.round(2) if "fp_proj" in p else np.nan,
+        "Model median": p.model_median.round(1) if "model_median" in p else np.nan,
+        "Edge at best price %": p.edge_market,
+    })
+
+
+def capture_close(key: str, within_h: float = 4.0, offline=False, progress=lambda m: None) -> dict:
+    """Pull current prices for logged picks whose games start within `within_h` hours (the closing prices).
+    Costs one Odds API credit per market per game, only for games/markets with picks."""
+    pk = storage.picks()
+    if pk.empty:
+        return {"games": 0, "credits": 0}
+    now = pd.Timestamp.now(tz="UTC")
+    k = pd.to_datetime(pk.commence, utc=True, errors="coerce")
+    due = pk[(k > now) & (k <= now + pd.Timedelta(hours=within_h))]
+    credits = 0
+    for ev, g in due.groupby("event_id"):
+        mk = sorted(set(g.market.dropna()))
+        if not ev or not mk:
+            continue
+        progress(f"Closing prices: {g.game.iloc[0]}")
+        p = odds.props(key, ev, mk, offline=offline)
+        storage.save_prop_prices(p)
+        credits += len(mk)
+    return {"games": int(due.event_id.nunique()), "credits": credits}
+
+
+def _close_prob(prices: pd.DataFrame, r) -> float:
+    """Market's no-vig chance for the pick's side from the last prices seen before kickoff."""
+    if prices.empty:
+        return np.nan
+    q = prices[(prices.event_id == r.event_id) & (prices.player == r.player) & (prices.market == r.market)]
+    if r.stat != "any_td":
+        q = q[np.isclose(q.line.astype(float), float(r.line))]
+    q = q[pd.to_datetime(q.retrieved_utc, utc=True) < pd.to_datetime(r.commence, utc=True)]
+    if q.empty:
+        return np.nan
+    last = q.sort_values("retrieved_utc").groupby(["book", "side"]).tail(1)
+    if r.stat == "any_td":
+        y = last[last.side == "Yes"].price.map(odds.implied_prob)
+        return float(y.median()) if len(y) else np.nan
+    pv = last.pivot_table(index="book", columns="side", values="price", aggfunc="last")
+    if not {"Over", "Under"} <= set(pv.columns):
+        return np.nan
+    po = [odds.no_vig(odds.implied_prob(o), odds.implied_prob(u)) for o, u in zip(pv.Over, pv.Under) if pd.notna(o) and pd.notna(u)]
+    if not po:
+        return np.nan
+    p_over = float(np.median(po))
+    return p_over if r.side in ("Over", "Yes") else 1 - p_over
+
+
+def grade_picks(offline=False) -> tuple[pd.DataFrame, dict]:
+    """Every logged pick: result once the game is final, and closing-line value (CLV) — whether the
+    logged price beat the market's last pre-kickoff price. CLV is the fast, honest test of an edge."""
+    pk = storage.picks()
+    if pk.empty:
+        return pd.DataFrame(), {"n": 0}
+    prices = storage.prop_prices(sorted(set(pk.event_id.dropna())))
+    started = pd.to_datetime(pk.commence, utc=True, errors="coerce") <= pd.Timestamp.now(tz="UTC")
+    # the close is only known once the game has started; before that the latest price is not a close
+    pk["close_p"] = [_close_prob(prices, r) if go else np.nan for r, go in zip(pk.itertuples(), started)]
+    pk["taken_p"] = pk.price.map(odds.implied_prob)
+    pk["clv"] = ((pk.close_p - pk.taken_p) * 100).round(1)   # + = your price was better than the close
+    # results
+    seasons = sorted(set(pk.season.astype(int)))
+    try:
+        from .models.features import tidy_stats
+        t = tidy_stats(nv.weekly_stats(seasons, offline=offline)).assign(nn=lambda d: d.name.map(norm_name))
+    except StepError:
+        t = pd.DataFrame()
+    pk["nn"] = pk.player.map(norm_name)
+    res = []
+    for r in pk.itertuples():
+        hit = t[(t.season == r.season) & (t.week == r.week) & (t.nn == r.nn)] if not t.empty else t
+        if hit.empty or r.stat not in hit:
+            res.append((np.nan, ""))
+            continue
+        a = float(hit[r.stat].iloc[0])
+        if r.stat == "any_td":
+            won = a > 0
+            res.append((a, "won" if won else "lost"))
+            continue
+        if a == r.line:
+            res.append((a, "push"))
+        else:
+            res.append((a, "won" if (a > r.line) == (r.side == "Over") else "lost"))
+    pk["actual"], pk["result"] = [x[0] for x in res], [x[1] for x in res]
+    pk["units"] = [(_dec(p) - 1) if rs == "won" else (-1.0 if rs == "lost" else 0.0) for p, rs in zip(pk.price, pk.result)]
+    done = pk[pk.result != ""]
+    cl = pk[pk.clv.notna()]
+    summary = {"n": len(pk), "graded": len(done), "won": int((done.result == "won").sum()),
+               "lost": int((done.result == "lost").sum()), "push": int((done.result == "push").sum()),
+               "units": round(float(done.units.sum()), 2), "roi": round(float(done.units.mean() * 100), 1) if len(done) else None,
+               "clv_n": len(cl), "clv_avg": round(float(cl.clv.mean()), 2) if len(cl) else None,
+               "beat_close": round(float((cl.clv > 0).mean() * 100), 1) if len(cl) else None}
+    return pk.drop(columns=["nn"]), summary
+
+
+def build_midweek(settings, season: int | None = None, week: int | None = None, markets=None, offline=False,
+                  progress=lambda m: None) -> tuple[pd.DataFrame, dict]:
+    """The whole midweek routine: forecasts (+ FantasyPros stat mix if tested), props from every book,
+    flagged picks, logged with their best price. Used by the Picks tab and the scheduled Mac check."""
+    from .models import train
+    from .sources import sleeper
+    if not settings.odds_api_key:
+        raise StepError("Midweek picks", "No Odds API key set.", "Props come from The Odds API.",
+                        "Paste your Odds API key in Settings.")
+    sched = nv.schedules(offline=offline)
+    if season is None or week is None:
+        season, week = nv.upcoming_week(sched)
+    progress("Forecasting players…")
+    pm, dm, meta = train.get_models(offline=offline)
+    try:
+        spp, _ = sleeper.players(offline=offline)
+    except StepError:
+        spp = None
+    lines = None
+    try:
+        lines = odds.consensus(odds.game_lines(settings.odds_api_key, offline=offline))
+    except StepError:
+        pass
+    fc, _ = train.forecast_week(season, week, spp, pm, lines, offline=offline)
+    fp, fp_note = None, "no FantasyPros key — model only"
+    if settings.fantasypros_api_key:
+        try:
+            from .sources import fantasypros
+            fp, _ = fantasypros.projections(settings.fantasypros_api_key, season, week, offline=offline)
+            fp_note = "FantasyPros must agree"
+            if settings.stat_weights:
+                fc, _ = blend_fp_stats(fc, fp, settings.stat_weights)
+        except StepError as e:
+            fp_note = "FantasyPros unavailable (" + e.what + ") — model only"
+    progress("Pulling props from every book…")
+    board, info = props_board(settings.odds_api_key, season, week, fc, pm, markets or CORE_PROP_MARKETS,
+                              offline=offline, progress=progress)
+    picks = midweek_picks(board, fp)
+    if not picks.empty:
+        picks = picks.assign(season=season, week=week)
+        info["new"] = storage.save_picks(picks)
+    else:
+        info["new"] = 0
+    info.update({"season": season, "week": week, "fp_note": fp_note, "n": len(picks)})
+    return picks, info
