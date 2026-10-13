@@ -383,7 +383,11 @@ def blend_fp_stats(fc: pd.DataFrame, fp: pd.DataFrame, weights: dict) -> tuple[p
 
 
 # ------------------------------------------------------------------ midweek picks + closing-line grading
-MIN_DIFF = 4.0   # percentage points the model must differ from the market (same threshold as "Lean")
+# The rule being tested forward. 2025 backtest on real lines (one prop per player-game, 2,472 props):
+# no edge overall; the only hint was Unders where the model sits 10+ points below the market
+# (53.8% won, ROI +2.1% ± 4.6 — not proven). Picks therefore log that rule so it builds evidence.
+MIN_DIFF = 10.0
+PICK_SIDES = ("Under",)
 
 
 def _dec(american) -> float:
@@ -392,7 +396,7 @@ def _dec(american) -> float:
 
 
 def midweek_picks(board: pd.DataFrame, fp: pd.DataFrame | None = None, min_diff: float = MIN_DIFF,
-                  need_fp: bool = True) -> pd.DataFrame:
+                  need_fp: bool = True, sides=PICK_SIDES) -> pd.DataFrame:
     """Props where the model differs from the market by min_diff+ points and (when FantasyPros numbers
     are available) FantasyPros points the same way. One row per prop with the best price across books.
     Information only — a research list to track against the closing line, not betting advice."""
@@ -414,6 +418,8 @@ def midweek_picks(board: pd.DataFrame, fp: pd.DataFrame | None = None, min_diff:
         if abs(diff) < min_diff or (td and diff < 0):
             continue                       # a TD "No" lean is mostly the book's one-sided margin
         side = ("Yes" if td else "Over") if diff > 0 else "Under"
+        if sides and side not in sides:
+            continue
         # FantasyPros direction
         fp_val, agrees = np.nan, None
         if fpi is not None:

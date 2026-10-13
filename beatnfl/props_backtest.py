@@ -34,7 +34,23 @@ from .sources import odds
 EVID = HOME / "evidence"
 BT_DIR = HOME / "backtest"
 BT_MARKETS = ["player_pass_yds", "player_rush_yds", "player_reception_yds"]
-THRESHOLDS = (4, 6, 8, 10)
+THRESHOLDS = (4, 6, 8, 10, 15)
+
+
+def load_result(path) -> dict:
+    """Stored result, re-summarised from the saved per-prop file when present (so improvements to the
+    analysis apply to past runs without spending credits again)."""
+    from pathlib import Path
+    r = json.loads(Path(path).read_text())
+    csv = BT_DIR / f"props_{r.get('season')}.csv"
+    if csv.exists():
+        try:
+            D = pd.read_csv(csv)
+            r.update(summarize(D))
+            r["props_matched"] = int(len(main_lines(D)))
+        except Exception:  # noqa: BLE001
+            pass
+    return r
 
 
 def estimate(season: int, markets=None, offline=False) -> dict:
@@ -209,11 +225,23 @@ def run(key: str, season: int = 2025, markets=None, reserve: float = 4000, offli
     return res
 
 
+def main_lines(D: pd.DataFrame) -> pd.DataFrame:
+    """One prop per player-game: the line the most books posted (ties → closest to the median line).
+    Alternate lines for the same player are near-copies of one bet, so counting them all overstates the sample."""
+    D = D.copy()
+    keys = ["event_id", "player", "stat"]
+    if not set(keys + ["books", "line"]) <= set(D.columns):
+        return D
+    D["_med"] = D.groupby(keys).line.transform("median")
+    D["_dist"] = (D.line - D._med).abs()
+    return D.sort_values(["books", "_dist"], ascending=[False, True]).drop_duplicates(keys).drop(columns=["_med", "_dist"])
+
+
 def summarize(D: pd.DataFrame) -> dict:
-    """Calibration on every prop + the Picks rule replayed at several thresholds."""
+    """Calibration on every prop + the Picks rule replayed at several thresholds (main line per player-game)."""
     if D.empty:
         return {"n": 0}
-    D = D.copy()
+    D = main_lines(D)
     D["over"] = np.where(D.actual > D.line, 1.0, np.where(D.actual < D.line, 0.0, np.nan))
     d = D[D.over.notna()]
     brier = {"model": float(((d.model_p_over - d.over) ** 2).mean()),
@@ -234,15 +262,45 @@ def summarize(D: pd.DataFrame) -> dict:
         s["close_side"] = np.where(over, s.close_p_over, 1 - s.close_p_over)
         s["taken_p"] = s.price.map(odds.implied_prob)
         s["clv"] = (s.close_side - s.taken_p) * 100
+        s["moved"] = (s.close_side - s.mkt_side) * 100           # did the market move toward the pick?
         won = np.where(s.actual == s.line, np.nan, np.where(over, s.actual > s.line, s.actual < s.line).astype(float))
         s["units"] = np.where(np.isnan(won), 0.0, np.where(won == 1, s.price.map(_dec) - 1, -1.0))
+        s["won"] = won
         g = s[~np.isnan(won)]
         c = s[s.clv.notna()]
+        side = {}
+        for nm, msk in (("over", over), ("under", ~over)):
+            gg = s[msk & ~np.isnan(won)]
+            if len(gg):
+                side[nm] = {"n": int(len(gg)), "win_rate": round(float(gg.won.mean()) * 100, 1),
+                            "roi": round(float(gg.units.mean()) * 100, 1)}
         picks.append({"threshold": thr, "n": int(len(s)), "won": int(np.nansum(won)), "lost": int((won == 0).sum()),
                       "win_rate": round(float(np.nanmean(won)) * 100, 1) if len(g) else None,
                       "units": round(float(s.units.sum()), 1), "roi": round(float(g.units.mean()) * 100, 1) if len(g) else None,
+                      "roi_se": round(float(g.units.std() / np.sqrt(len(g))) * 100, 1) if len(g) > 1 else None,
                       "clv_n": int(len(c)), "clv_avg": round(float(c.clv.mean()), 2) if len(c) else None,
+                      "moved_toward": round(float((c.moved > 0).mean()) * 100, 1) if len(c) else None,
+                      "moved_away": round(float((c.moved < 0).mean()) * 100, 1) if len(c) else None,
                       "beat_close": round(float((c.clv > 0).mean()) * 100, 1) if len(c) else None,
+                      "sides": side,
                       "by_stat": {k: {"n": int(len(v)), "roi": round(float(v.units.mean()) * 100, 1)}
                                   for k, v in s.groupby("stat")}})
-    return {"n": int(len(D)), "brier": {k: round(v, 4) for k, v in brier.items()}, "picks": picks}
+    # does the model add anything the market doesn't already know? logistic fit of the result on both
+    edge = model_information(d)
+    return {"n": int(len(D)), "brier": {k: round(v, 4) for k, v in brier.items()}, "picks": picks, "model_info": edge}
+
+
+def model_information(d: pd.DataFrame) -> dict:
+    """Weight of the model's view once the market's price is known (z ≥ 2 ≈ real information)."""
+    if len(d) < 200:
+        return {}
+    lg = lambda p: np.log(np.clip(p, 1e-4, 1 - 1e-4) / (1 - np.clip(p, 1e-4, 1 - 1e-4)))
+    X = np.column_stack([np.ones(len(d)), lg(d.p_over.to_numpy()), lg(d.model_p_over.to_numpy())])
+    y = d.over.to_numpy()
+    b = np.zeros(3)
+    for _ in range(50):
+        p = 1 / (1 + np.exp(-X @ b))
+        H = X.T @ (X * (p * (1 - p))[:, None])
+        b += np.linalg.solve(H + 1e-9 * np.eye(3), X.T @ (y - p))
+    se = np.sqrt(np.diag(np.linalg.inv(H)))
+    return {"coef": round(float(b[2]), 3), "se": round(float(se[2]), 3), "z": round(float(b[2] / se[2]), 2), "n": int(len(d))}

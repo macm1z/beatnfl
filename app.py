@@ -704,10 +704,12 @@ with tab_props:
 with tab_picks:
     from beatnfl import research as _rs
     from beatnfl import schedule as _sch
-    st.caption("A research list, not betting advice. Props where the model differs from the market by 4+ points "
-               "**and** FantasyPros points the same way, with the best price across books. Every pick is logged with "
-               "that price, then graded against the closing line and the result — the evidence for whether these "
-               "edges are real.")
+    st.warning("**Experimental — no proven edge.** The 2025 backtest on real sportsbook lines found the model adds no "
+               "reliable information beyond the books' prices. The one hint was **Unders where the model is 10+ points "
+               "below the market** (2025: 53.8% won, ROI +2.1% ± 4.6 — could be luck). Picks logs exactly that rule so "
+               "it can be tested on games it has never seen. Research only — don't treat these as bets.")
+    st.caption("Rule being tested: Under, model 10+ points below the market, FantasyPros agrees (when your key is set), "
+               "best price across books. Each pick is logged with that price and graded on the result and the closing line.")
     season_k, week_k = int(ss.get("p_season")), int(ss.get("p_week"))
     c1, c2 = st.columns([1.4, 3], vertical_alignment="center")
     find = c1.button("🔎 Find this week's picks", type="primary", width="stretch", disabled=not S.odds_api_key)
@@ -1027,27 +1029,36 @@ with tab_evidence:
                 st.error(e.as_text())
     pbf = sorted(glob.glob(str(_H / "evidence" / "props_backtest_*.json")))
     for f_ in pbf[::-1]:
-        r_ = json.loads(Path(f_).read_text())
+        r_ = _pb.load_result(f_)
         if not r_.get("n"):
             st.info(f"{r_.get('season')}: {r_.get('note', 'no data')}")
             continue
-        head = (f"**{r_['season']}** · {r_['props_matched']:,} props with a model forecast, weeks "
+        head = (f"**{r_['season']}** · {r_['n']:,} props (one per player-game; alternate lines not double-counted), weeks "
                 f"{min(r_['weeks'])}–{max(r_['weeks'])}" if r_.get("weeks") else f"**{r_['season']}**")
         if r_.get("status") == "paused":
             head += " · ⏸ paused by the credit limit — run again after credits renew to finish the season"
         st.markdown(head)
-        br = r_.get("brier", {})
-        st.caption("Accuracy of the Over chance on every prop (Brier score, lower is better): model "
+        mi, br = r_.get("model_info", {}), r_.get("brier", {})
+        if mi:
+            verdict = ("the model adds real information beyond the sportsbook price" if mi["z"] >= 2 else
+                       "the model adds **no proven information** beyond the sportsbook price")
+            st.markdown(f"Verdict: {verdict} (weight {mi['coef']:+.2f} ± {mi['se']:.2f}; real information needs about 2× its ± or more).")
+        st.caption("Accuracy of the Over chance (Brier, lower is better; 0.2500 = calling everything 50/50): model "
                    f"{br.get('model', float('nan')):.4f} · market midweek {br.get('market_midweek', float('nan')):.4f}"
                    + (f" · market at close {br['market_close']:.4f}" if "market_close" in br else ""))
-        t, tc = tidy(pd.DataFrame([{k: v for k, v in x.items() if k != "by_stat"} for x in r_["picks"]]),
-                     {"threshold": "Model differs by (pts)", "n": "Picks", "won": "Won", "lost": "Lost", "win_rate": "Win %",
-                      "units": "Units", "roi": "ROI %", "clv_avg": "Avg CLV (pts)", "beat_close": "Beat close %"},
-                     ints=("Model differs by (pts)", "Picks", "Won", "Lost"), one=("Win %", "Units", "ROI %", "Beat close %"),
+        pt = pd.DataFrame([{**{k: v for k, v in x.items() if k not in ("by_stat", "sides")},
+                            "roi_under": (x.get("sides", {}).get("under") or {}).get("roi"),
+                            "roi_over": (x.get("sides", {}).get("over") or {}).get("roi")} for x in r_["picks"]])
+        t, tc = tidy(pt, {"threshold": "Model differs by (pts)", "n": "Picks", "win_rate": "Win %", "roi": "ROI %",
+                          "roi_se": "± (luck)", "roi_under": "ROI Unders %", "roi_over": "ROI Overs %",
+                          "clv_avg": "Avg CLV (pts)", "moved_toward": "Line moved toward %", "moved_away": "Line moved away %"},
+                     ints=("Model differs by (pts)", "Picks"),
+                     one=("Win %", "ROI %", "± (luck)", "ROI Unders %", "ROI Overs %", "Line moved toward %", "Line moved away %"),
                      two=("Avg CLV (pts)",))
         show(t, tc)
-    st.caption("Read it as: positive average CLV and ROI that hold at higher thresholds = a real edge. Break-even at "
-               "-110 is 52.4%. One season is a few hundred picks — treat it as a strong hint, not proof.")
+    st.caption("ROI within its ± is indistinguishable from luck. Avg CLV compares your price (with the book's margin) to "
+               "the fair closing chance; 'Line moved toward' = how often the market moved to the pick's side by kickoff. "
+               "Break-even at -110 is 52.4%.")
 
     st.markdown("**FantasyPros vs Sleeper vs model — which to trust, by position**")
     st.caption("Scores each source's published weekly projections against what actually happened (the model is "

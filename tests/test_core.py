@@ -709,15 +709,17 @@ def test_midweek_picks_need_fantasypros_agreement_and_take_best_price():
     b = _board_rows()
     fp_yes = pd.DataFrame({"name": ["Drake London", "Bijan Robinson"], "pos": ["WR", "RB"], "fp_rec_yds": [80.0, None],
                            "fp_rush_yds": [None, 72.0]})
-    p = research.midweek_picks(b, fp_yes)
+    p = research.midweek_picks(b, fp_yes, min_diff=4, sides=None)
     assert set(p.player) == {"Drake London", "Bijan Robinson"}             # Pitts below the 4-point bar
     dl = p[p.player == "Drake London"].iloc[0]
     assert dl.side == "Over" and dl.book == "fanduel" and dl.price == 105    # best price across books
     bj = p[p.player == "Bijan Robinson"].iloc[0]
     assert bj.side == "Under" and bj.book == "fanduel" and bj.price == -108
     fp_no = fp_yes.assign(fp_rec_yds=[70.0, None])                           # FantasyPros disagrees on London
-    assert "Drake London" not in set(research.midweek_picks(b, fp_no).player)
-    assert len(research.midweek_picks(b, None)) == 2                         # no FantasyPros key → model only
+    assert "Drake London" not in set(research.midweek_picks(b, fp_no, min_diff=4, sides=None).player)
+    assert len(research.midweek_picks(b, None, min_diff=4, sides=None)) == 2                         # no FantasyPros key → model only
+    default = research.midweek_picks(b, fp_yes)                            # the rule under test: Unders, 10+ pts
+    assert list(default.player) == ["Bijan Robinson"] and (default.side == "Under").all()
     v = research.picks_view(p)
     assert {"Best odds", "Book", "Market %", "Model %", "Edge at best price %"} <= set(v.columns)
 
@@ -725,7 +727,7 @@ def test_midweek_picks_need_fantasypros_agreement_and_take_best_price():
 def test_picks_logged_once_and_graded_with_clv(monkeypatch):
     from beatnfl import research
     from beatnfl.models import features
-    p = research.midweek_picks(_board_rows(), None).assign(season=2026, week=6, commence="2026-10-11T17:00:00Z")
+    p = research.midweek_picks(_board_rows(), None, min_diff=4, sides=None).assign(season=2026, week=6, commence="2026-10-11T17:00:00Z")
     assert storage.save_picks(p) == 2 and storage.save_picks(p) == 0        # first price kept, no duplicates
     # closing prices: London moved to -130 over everywhere (we took +105 → beat the close)
     close = pd.DataFrame([{"event_id": "e1", "book": bk, "market": "player_reception_yds", "player": "Drake London",
@@ -759,7 +761,7 @@ def test_mac_schedule_plists():
 
 def test_no_clv_before_kickoff():
     from beatnfl import research
-    p = research.midweek_picks(_board_rows(), None).assign(season=2099, week=1, commence="2099-09-10T17:00:00Z",
+    p = research.midweek_picks(_board_rows(), None, min_diff=4, sides=None).assign(season=2099, week=1, commence="2099-09-10T17:00:00Z",
                                                             player=lambda d: d.player + " Future")
     storage.save_picks(p)
     tbl, _ = research.grade_picks()
@@ -804,3 +806,15 @@ def test_props_backtest_flow_budget_and_grading(monkeypatch):
     # the budget guard pauses before spending past the reserve
     monkeypatch.setitem(net.QUOTA, "remaining", 4010)
     assert pb.run("k", 2025, ["player_reception_yds"], reserve=4000)["status"] == "paused"
+
+
+def test_backtest_summary_counts_one_prop_per_player_game():
+    from beatnfl import props_backtest as pb
+    rows = []
+    for ln, books in ((74.5, 3), (72.5, 1), (76.5, 1)):          # main line + two alternate lines
+        rows.append({"event_id": "e", "player": "Drake London", "stat": "rec_yds", "line": ln, "books": books,
+                     "p_over": .5, "close_p_over": .52, "model_p_over": .65, "actual": 90.0,
+                     "best_over": -110.0, "best_under": -110.0})
+    s = pb.summarize(pd.DataFrame(rows * 1))
+    assert s["n"] == 1 and s["picks"][0]["n"] == 1 and s["picks"][0]["sides"]["over"]["n"] == 1
+    assert s["picks"][0]["moved_toward"] == 100.0

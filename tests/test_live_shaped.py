@@ -115,7 +115,7 @@ def test_midweek_picks_end_to_end(live):
     picks, info = research.build_midweek(s, 2026, 6)
     assert info["season"] == 2026 and info["week"] == 6 and "FantasyPros" in info["fp_note"]
     loose, _ = research.build_midweek(Settings(odds_api_key="k"), 2026, 6)          # model-only list is a superset
-    assert len(loose) >= len(picks) and len(loose) > 0
+    assert len(loose) >= len(picks) and (loose.empty or (loose.side == "Under").all())
     assert len(storage.picks()) >= len(loose)
     tbl, sm = research.grade_picks()
     assert sm["n"] == len(storage.picks())
@@ -149,7 +149,8 @@ def test_app_every_button(live, monkeypatch):
     rng = np.random.default_rng(3)
     D = pd.DataFrame({"line": 60.5, "actual": rng.normal(62, 25, 400), "model_p_over": rng.uniform(.3, .7, 400),
                       "p_over": rng.uniform(.45, .55, 400), "close_p_over": rng.uniform(.45, .55, 400),
-                      "best_over": -105.0, "best_under": -108.0, "stat": "rec_yds"})
+                      "best_over": -105.0, "best_under": -108.0, "stat": "rec_yds",
+                      "event_id": [f"e{i}" for i in range(400)], "player": "P", "books": 2})
     res = pb.summarize(D) | {"season": 2025, "status": "paused", "weeks": [1, 2, 3], "props_matched": 400}
     pb.EVID.mkdir(parents=True, exist_ok=True)
     (pb.EVID / "props_backtest_2025.json").write_text(json.dumps(res, default=str))
