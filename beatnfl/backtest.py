@@ -316,3 +316,166 @@ def suggest_weights(graded: pd.DataFrame) -> dict | None:
     mae = g[g.source.isin(ok)].groupby("source").apply(lambda d: np.average(d.mae, weights=d.n), include_groups=False)
     inv = (1 / mae ** 2)
     return (inv / inv.sum()).round(2).to_dict()
+
+
+# ------------------------------------------------------------------ FantasyPros vs Sleeper vs model (runs on your computer)
+SRC_COLS = {"paid": "FantasyPros", "sleeper": "Sleeper", "model": "Model"}
+STAT_BLEND = {"pass_yds": ["QB"], "pass_att": ["QB"], "pass_cmp": ["QB"], "pass_td": ["QB"], "rush_yds": ["QB", "RB", "WR"],
+              "rush_att": ["QB", "RB"], "rec": ["RB", "WR", "TE"], "rec_yds": ["RB", "WR", "TE"]}
+
+
+def best_weights(df: pd.DataFrame, cols: list[str], target: str = "dk_pts", step: float = 0.05) -> tuple[dict, float]:
+    """Blend weights (summing to 1) with the lowest average miss, searched on a grid. Rows must have every col."""
+    import itertools
+    d = df.dropna(subset=cols + [target])
+    if d.empty:
+        return {}, float("nan")
+    X, y = d[cols].to_numpy(float), d[target].to_numpy(float)
+    grid = np.round(np.arange(0, 1 + 1e-9, step), 4)
+    best, best_w = np.inf, None
+    for w in itertools.product(grid, repeat=len(cols) - 1):
+        last = 1 - sum(w)
+        if last < -1e-9:
+            continue
+        wv = np.array(list(w) + [max(last, 0.0)])
+        mae = float(np.abs(X @ wv - y).mean())
+        if mae < best - 1e-9:
+            best, best_w = mae, wv
+    return {c: round(float(v), 2) for c, v in zip(cols, best_w)}, round(best, 3)
+
+
+def _weights_report(J: pd.DataFrame, current: dict) -> dict:
+    """Per-position comparison and best weights for whichever sources are present in J."""
+    have = [c for c in ("paid", "sleeper", "model") if c in J and J[c].notna().sum() >= 50]
+    out = {"sources": [SRC_COLS[c] for c in have], "by_pos": [], "weights": {}}
+    for pos, d in J.groupby("position"):
+        d = d.dropna(subset=have + ["dk_pts"])
+        if len(d) < 100:
+            continue
+        w, mae = best_weights(d, have)
+        cur_w = np.array([current.get(c, 0) for c in have], float)
+        cur_mae = float(np.abs(d[have].to_numpy(float) @ (cur_w / cur_w.sum()) - d.dk_pts).mean()) if cur_w.sum() else np.nan
+        row = {"pos": pos, "n": len(d), **{f"mae_{c}": round(float((d[c] - d.dk_pts).abs().mean()), 3) for c in have},
+               "mae_current_blend": round(cur_mae, 3), "mae_best_blend": mae, **{f"w_{c}": w[c] for c in have}}
+        out["by_pos"].append(row)
+        out["weights"][pos] = {c: w[c] for c in have}
+    return out
+
+
+def source_compare(fp_key: str, seasons=None, current_weights=None, offline=False, progress=print) -> dict:
+    """Retrospective test on past weeks: FantasyPros' published weekly projections (your API key),
+    Sleeper's, and the in-house model (trained only on earlier seasons) vs what actually happened.
+    Picks blend weights per position, and per stat for the props forecasts. Past-week FantasyPros
+    projections may not be available on every key; the result says so and the test still runs on
+    the sources that are."""
+    from .names import match_key
+    from .sources import fantasypros, sleeper
+    cur = nv.current_season()
+    seasons = list(seasons or (cur - 1, cur))
+    stats = nv.weekly_stats(range(2018, cur + 1), offline=offline)
+    sched = nv.schedules(offline=offline)
+    tg = nv.team_games(sched)
+    feat = F.build(F.tidy_stats(stats), tg)
+    feat = feat[feat.n_prior >= 2]
+    try:
+        spl, _ = sleeper.players(offline=offline)
+        gs = spl.dropna(subset=["gsis_id"]).drop_duplicates("sleeper_id").set_index("sleeper_id").gsis_id
+    except Exception:  # noqa: BLE001
+        gs = None
+    notes, rows, fp_weeks, sl_weeks = [], [], 0, 0
+    for S in seasons:
+        te = feat[(feat.season == S) & (feat.played == 1)].copy()
+        if te.empty:
+            continue
+        progress(f"{S}: training model on seasons before {S}…")
+        m = PlayerModel().fit(feat[feat.season < S])
+        pr = m.predict(te)
+        te["model"] = pr.p_dk_pts.values
+        for t in STAT_BLEND:
+            te[f"m_{t}"] = pr[f"p_{t}"].values
+        te["key"] = [match_key(n, p, tm) for n, p, tm in zip(te.name, te.position, te.team)]
+        for w in sorted(te.week.unique()):
+            j = te[te.week == w].copy()
+            progress(f"{S} week {w}: FantasyPros + Sleeper projections…")
+            if fp_key:
+                try:
+                    fp, info = fantasypros.projections(fp_key, int(S), int(w), offline=offline)
+                    fp = fp[fp.pos != "DST"].drop_duplicates("key")
+                    if len(fp) >= 50 and not info.get("limited"):
+                        keep = ["key", "proj_paid"] + [c for c in fp if c.startswith("fp_")]
+                        j = j.merge(fp[keep].rename(columns={"proj_paid": "paid"}), on="key", how="left")
+                        fp_weeks += 1
+                except Exception as e:  # noqa: BLE001
+                    if not any("FantasyPros" in n for n in notes):
+                        notes.append(f"FantasyPros past weeks unavailable ({getattr(e, 'what', str(e))[:90]}).")
+            if gs is not None:
+                try:
+                    sp, _ = sleeper.projections(int(S), int(w), offline=offline)
+                    sp["player_id"] = sp.sleeper_id.map(gs)
+                    j = j.merge(sp[["player_id", "proj_sleeper"]].dropna().drop_duplicates("player_id")
+                                .rename(columns={"proj_sleeper": "sleeper"}), on="player_id", how="left")
+                    sl_weeks += 1
+                except Exception:  # noqa: BLE001
+                    pass
+            rows.append(j)
+    if not rows:
+        return {"n": 0, "note": "No completed weeks to test."}
+    J = pd.concat(rows, ignore_index=True)
+    for c in ("paid", "sleeper"):
+        if c not in J:
+            J[c] = np.nan
+    if fp_key and fp_weeks == 0 and not notes:
+        notes.append("FantasyPros returned no projections for past weeks on this key — it will be graded live "
+                     "from now on (each Refresh freezes its numbers; graded after the games).")
+    cw = current_weights or {}
+    out = {"generated": datetime.now().isoformat(timespec="seconds"), "seasons": seasons, "n": int(len(J)),
+           "weeks_fantasypros": fp_weeks, "weeks_sleeper": sl_weeks, "notes": notes,
+           "label": "retrospective; FantasyPros and Sleeper numbers as published for each week",
+           **_weights_report(J, cw)}
+    # props: should FantasyPros' stat lines be blended into the model's stat forecasts?
+    stat_rows, stat_w = [], {}
+    if fp_weeks:
+        for t, poss in STAT_BLEND.items():
+            d = J[J.position.isin(poss)].dropna(subset=[f"m_{t}", f"fp_{t}", t])
+            if len(d) < 200:
+                continue
+            w, mae = best_weights(pd.DataFrame({"model": d[f"m_{t}"], "fp": d[f"fp_{t}"], t: d[t]}), ["model", "fp"], target=t)
+            stat_w[t] = w["fp"]
+            stat_rows.append({"stat": t, "n": len(d), "mae_model": round(float((d[f"m_{t}"] - d[t]).abs().mean()), 2),
+                              "mae_fantasypros": round(float((d[f"fp_{t}"] - d[t]).abs().mean()), 2),
+                              "mae_blend": round(mae, 2), "w_fantasypros": w["fp"]})
+    out["stats"], out["stat_weights"] = stat_rows, stat_w
+    EVID.mkdir(parents=True, exist_ok=True)
+    (EVID / f"source_compare_{datetime.now():%Y%m%d_%H%M}.json").write_text(json.dumps(out, indent=1, default=str))
+    return out
+
+
+def live_weights(min_weeks: int = 3, offline=False) -> dict:
+    """Per-position weights from the app's own frozen pregame projections once ≥ min_weeks are graded —
+    the prospective check that keeps the retrospective weights honest."""
+    from . import storage
+    from .names import match_key
+    runs = storage.projection_runs_for_grading()
+    if runs.empty:
+        return {"weeks": 0}
+    stats = nv.weekly_stats(sorted(set(runs.season.dropna().astype(int))), offline=offline)
+    sched = nv.schedules(offline=offline)
+    act = stats[stats.position.isin(["QB", "RB", "WR", "TE"])]
+    act = act.assign(key=[match_key(n, p, t) for n, p, t in zip(act.player_display_name, act.position, act.team)])
+    parts = []
+    for r in runs.itertuples():
+        if sched[(sched.season == r.season) & (sched.week == r.week)].home_score.isna().any():
+            continue
+        _, pool = storage.get_projection_run(r.id)
+        a = act[(act.season == r.season) & (act.week == r.week)][["key", "dk_pts"]]
+        g = pool[~pool.out & (pool.pos != "DST")].merge(a, on="key", how="inner")
+        g = g.rename(columns={"proj_paid": "paid", "proj_sleeper": "sleeper", "proj_model": "model", "pos": "position"})
+        parts.append(g.assign(season=r.season, week=r.week))
+    if not parts:
+        return {"weeks": 0}
+    J = pd.concat(parts, ignore_index=True)
+    weeks = int(J.groupby(["season", "week"]).ngroups)
+    out = {"weeks": weeks, "n": int(len(J))}
+    if weeks >= min_weeks:
+        out.update(_weights_report(J, {}))
+    return out

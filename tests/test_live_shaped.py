@@ -101,6 +101,24 @@ def test_research_all_sources(live):
     assert len(board) >= 5 and board.model_p_over.notna().sum() >= 4
     m = research.matchups(2026, 6)
     assert len(m) == 28
+    # FantasyPros stat lines mix into props forecasts
+    from beatnfl.sources import fantasypros
+    fpdf, _ = fantasypros.projections("fp-key", 2026, 6)
+    fc2, n = research.blend_fp_stats(fc, fpdf, {"rec_yds": 0.4, "rush_yds": 0.3})
+    assert n > 50 and (fc2.p_rec_yds != fc.p_rec_yds).sum() > 20
+
+
+def test_source_compare_end_to_end(live):
+    """FantasyPros vs Sleeper vs model on completed 2026 weeks (stand-in FantasyPros/Sleeper numbers)."""
+    from beatnfl import backtest
+    out = backtest.source_compare("fp-key", seasons=(2026,), current_weights={"paid": .5, "sleeper": .25, "model": .25},
+                                  progress=lambda m: None)
+    assert out["n"] > 500 and out["weeks_fantasypros"] >= 3
+    assert {r["pos"] for r in out["by_pos"]} >= {"QB", "RB", "WR", "TE"}
+    for pos, w in out["weights"].items():
+        assert abs(sum(w.values()) - 1) < 1e-6 and set(w) == {"paid", "sleeper", "model"}
+    assert all(r["mae_best_blend"] <= min(r["mae_paid"], r["mae_sleeper"], r["mae_model"]) + 1e-6 for r in out["by_pos"])
+    assert out["stats"] and set(out["stat_weights"]) <= set(backtest.STAT_BLEND)
 
 
 def test_app_every_button(live, monkeypatch):
@@ -109,7 +127,7 @@ def test_app_every_button(live, monkeypatch):
     from beatnfl.config import Settings
     _yahoo_mock(monkeypatch)
     s = Settings.load()
-    s.odds_api_key, s.yahoo_client_id, s.yahoo_client_secret = "k", "cid", "sec"
+    s.odds_api_key, s.yahoo_client_id, s.yahoo_client_secret, s.fantasypros_api_key = "k", "cid", "sec", "fp-key"
     s.save()
     monkeypatch.setattr(update, "check", lambda r, t="": {"sha": "x", "date": "2026-10-12", "message": "test", "update_available": False})
     app = Path(__file__).resolve().parent.parent / "app.py"
@@ -117,7 +135,8 @@ def test_app_every_button(live, monkeypatch):
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     labels = ["⟳ Refresh", "⚙ Build lineups", "💾 Save", "Load roster & projections", "Load matchups",
-              "Forecast every player this week", "Load props", "Grade frozen forecasts", "Copy diagnostics", "Check for updates"]
+              "Forecast every player this week", "Load props", "Grade frozen forecasts", "Grade live weights", "Copy diagnostics", "Check for updates",
+              "Use these weights", "⟳ Refresh"]
     at.text_area(key="pasted_proj").input("Player\tTeam\tPos\tProj\nJosh Allen\tBUF\tQB\t24.9\nPuka Nacua\tLAR\tWR\t21.0\n")
     for lab in labels:
         btn = [b for b in at.button if b.label == lab]
@@ -141,8 +160,12 @@ def test_app_every_button(live, monkeypatch):
     assert len(storage.list_lineup_sets()) >= 1
     run = at.session_state["run"]
     assert any(x.step == "4b. Your projections" and x.status in ("ok", "warn") and "2 of" in x.message for x in run.steps)
-    s.odds_api_key = s.yahoo_client_id = s.yahoo_client_secret = ""
-    s.save()
+    assert any(b.label == "Run the source test (≈10–15 min)" for b in at.button)
+    s2 = Settings.load()
+    assert s2.pos_weights, "Use these weights did not save per-position weights"
+    s2.odds_api_key = s2.yahoo_client_id = s2.yahoo_client_secret = s2.fantasypros_api_key = ""
+    s2.pos_weights, s2.stat_weights = {}, {}
+    s2.save()
 
 
 def test_yahoo_sign_in_and_refresh(monkeypatch, tmp_path):

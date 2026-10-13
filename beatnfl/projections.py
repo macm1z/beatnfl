@@ -55,6 +55,7 @@ def blend(pool: pd.DataFrame, settings, sources: dict[str, pd.DataFrame]) -> pd.
             continue
         p = p.merge(df[["dk_id", col]].drop_duplicates("dk_id"), on="dk_id", how="left")
     weights = {"paid": settings.w_paid, "sleeper": settings.w_sleeper, "model": settings.w_model}
+    pw = getattr(settings, "pos_weights", None) or {}
     num = pd.Series(0.0, index=p.index)
     den = pd.Series(0.0, index=p.index)
     used = [[] for _ in range(len(p))]
@@ -62,12 +63,19 @@ def blend(pool: pd.DataFrame, settings, sources: dict[str, pd.DataFrame]) -> pd.
         col = f"proj_{name}"
         if col not in p:
             p[col] = np.nan
-        have = p[col].notna()
-        num[have] += w * p.loc[have, col]
-        den[have] += w
+        # tested per-position weight where one exists, else the global weight
+        wv = pd.Series([float(pw.get(ps, {}).get(name, w)) if ps in pw else w for ps in p.pos], index=p.index)
+        have = p[col].notna() & (wv > 0)
+        num[have] += wv[have] * p.loc[have, col]
+        den[have] += wv[have]
         for i in np.where(have)[0]:
             used[i].append(name)
-    p["proj_raw"] = (num / den.replace(0, np.nan)).round(2)
+    raw = num / den.replace(0, np.nan)
+    # a player covered only by a source weighted 0 for his position still gets that source's number
+    only = raw.isna()
+    if only.any():
+        raw[only] = p.loc[only, [f"proj_{n}" for n in weights]].mean(axis=1)
+    p["proj_raw"] = raw.round(2)
     p["sources"] = [",".join(u) for u in used]
     p["n_sources"] = [len(u) for u in used]
     # spread between sources = disagreement flag

@@ -634,3 +634,43 @@ def test_fantasypros_sample_key_and_bad_key_are_explained(monkeypatch):
     with pytest.raises(StepError) as e:
         fantasypros.projections("BAD", 2026, 6)
     assert "refused the API key" in e.value.what
+
+
+def test_best_weights_finds_the_better_source():
+    from beatnfl.backtest import best_weights
+    rng = np.random.default_rng(1)
+    y = rng.normal(15, 6, 3000)
+    d = pd.DataFrame({"dk_pts": y, "good": y + rng.normal(0, 2, 3000), "bad": y + rng.normal(0, 8, 3000)})
+    w, mae = best_weights(d, ["good", "bad"])
+    assert w["good"] >= 0.85 and abs(sum(w.values()) - 1) < 1e-6
+    assert mae <= float((d.good - d.dk_pts).abs().mean()) + 1e-9
+
+
+def test_blend_uses_position_weights_and_never_drops_a_covered_player():
+    ls, pool = pool_from_fixture()
+    p = pool.drop(columns=[c for c in pool if c.startswith("proj")] + ["value", "sources", "n_sources"], errors="ignore")
+    ids = p.dk_id.tolist()
+    paid = pd.DataFrame({"dk_id": ids, "proj_paid": 10.0})
+    model = pd.DataFrame({"dk_id": ids[:-5], "proj_model": 20.0})       # last 5 covered only by FantasyPros
+    s = Settings()
+    s.pos_weights = {"QB": {"paid": 0.0, "sleeper": 0.0, "model": 1.0}, "WR": {"paid": 0.75, "sleeper": 0.0, "model": 0.25}}
+    b = projections.blend(p, s, {"paid": paid, "model": model}).set_index("dk_id")
+    act = b[~b.out & (b.status != "Q")]
+    qb = act[(act.pos == "QB") & act.proj_model.notna()]
+    wr = act[(act.pos == "WR") & act.proj_model.notna()]
+    rb = act[(act.pos == "RB") & act.proj_model.notna()]
+    assert (qb.proj == 20.0).all() and (wr.proj == 12.5).all()
+    assert np.allclose(rb.proj, (0.5 * 10 + 0.25 * 20) / 0.75, atol=0.01)                # no position weights → globals
+    tail = act.loc[act.index.isin(ids[-5:])]
+    assert tail.proj.notna().all()                                         # only-FantasyPros players keep a number
+
+
+def test_fantasypros_stats_mix_into_forecasts():
+    from beatnfl import research
+    from beatnfl.names import match_key
+    fc = pd.DataFrame({"name": ["Drake London", "Bijan Robinson"], "position": ["WR", "RB"], "team": ["ATL", "ATL"],
+                       "p_rec_yds": [70.0, 30.0], "p_rush_yds": [np.nan, 80.0]})
+    fp = pd.DataFrame({"name": ["Drake London"], "pos": ["WR"], "team": ["ATL"], "fp_rec_yds": [90.0], "fp_rush_yds": [None]})
+    fp["key"] = [match_key(n, p, t) for n, p, t in zip(fp.name, fp.pos, fp.team)]
+    out, n = research.blend_fp_stats(fc, fp, {"rec_yds": 0.5, "rush_yds": 0.4})
+    assert n == 1 and out.p_rec_yds.tolist() == [80.0, 30.0] and out.p_rush_yds.iloc[1] == 80.0

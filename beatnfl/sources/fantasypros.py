@@ -38,6 +38,13 @@ OFF_KEYS = {
     "rush_2pt": ("2pt_tds", "two_pts"),
     "ret_td": ("ret_tds",),
 }
+# Stat lines in BeatNFL's own stat names (used to compare with / blend into the model's stat forecasts)
+STAT_KEYS = {
+    "pass_att": ("pass_att", "pass_attempts"), "pass_cmp": ("pass_cmp", "pass_completions"),
+    "pass_yds": ("pass_yds", "pass_yd"), "pass_td": ("pass_tds", "pass_td"),
+    "rush_att": ("rush_att", "rush_attempts"), "rush_yds": ("rush_yds", "rush_yd"),
+    "rec": ("rec_rec", "rec", "receptions"), "rec_yds": ("rec_yds", "rec_yd"),
+}
 DST_KEYS = {"sack": ("def_sack",), "int": ("def_int",), "fum_rec": ("def_fr",), "def_td": ("def_td",),
             "def_st_td": ("def_retd", "def_st_td"), "safe": ("def_safety",), "pts_allow": ("def_pa",)}
 
@@ -97,9 +104,14 @@ def projections(key: str, season: int, week: int, offline=False) -> tuple[pd.Dat
             pass
         for p in players:
             st = p.get("stats") or {}
-            rows.append({"name": p.get("name", ""), "pos": p.get("position_id") or pos,
-                         "team": norm_team(p.get("team_id") or ""), "fpid": p.get("fpid"),
-                         "proj_paid": dk_points(pos, st), "points_ppr": st.get("points_ppr")})
+            row = {"name": p.get("name", ""), "pos": p.get("position_id") or pos,
+                   "team": norm_team(p.get("team_id") or ""), "fpid": p.get("fpid"),
+                   "proj_paid": dk_points(pos, st), "points_ppr": st.get("points_ppr")}
+            if pos != "DST":
+                for k, names in STAT_KEYS.items():
+                    v = next((st[n] for n in names if st.get(n) is not None), None)
+                    row[f"fp_{k}"] = float(v) if v is not None else None
+            rows.append(row)
     df = pd.DataFrame(rows)
     if df.empty:
         raise StepError(STEP, f"FantasyPros returned no projections for {season} week {week}.",

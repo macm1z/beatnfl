@@ -354,3 +354,27 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
     else:
         out = out.sort_values("_diff", ascending=False, na_position="last")
     return out.drop(columns=["_diff", "_book"]).reset_index(drop=True)
+
+
+# ------------------------------------------------------------------ FantasyPros stat lines in forecasts
+def blend_fp_stats(fc: pd.DataFrame, fp: pd.DataFrame, weights: dict) -> tuple[pd.DataFrame, int]:
+    """Mix FantasyPros' projected stats into the model's stat forecasts, by the tested share per stat
+    (Evidence → FantasyPros vs Sleeper vs model). Players FantasyPros doesn't list keep the model's number.
+    Returns (forecasts, players blended)."""
+    if fc is None or fc.empty or fp is None or fp.empty or not weights:
+        return fc, 0
+    from .names import match_key
+    f = fc.copy()
+    f["_key"] = [match_key(n, p, t) for n, p, t in zip(f.name, f.position, f.team)]
+    src = fp.drop_duplicates("key").set_index("key")
+    hit = f._key.isin(src.index)
+    for stat, w in weights.items():
+        col, fcol = f"p_{stat}", f"fp_{stat}"
+        if not w or col not in f or fcol not in src:
+            continue
+        v = pd.to_numeric(f.loc[hit, "_key"].map(src[fcol]), errors="coerce")
+        ok = v.notna() & f.loc[hit, col].notna()
+        idx = v[ok].index
+        f.loc[idx, col] = (1 - w) * f.loc[idx, col] + w * v[ok]
+    f["fp_blended"] = hit
+    return f.drop(columns="_key"), int(hit.sum())

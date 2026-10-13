@@ -33,6 +33,10 @@ class Settings:
     w_paid: float = 0.50
     w_sleeper: float = 0.25
     w_model: float = 0.25
+    # Tested per-position weights {"QB": {"paid": .4, "sleeper": .3, "model": .3}, …} — override the three above
+    pos_weights: dict = field(default_factory=dict)
+    # Tested share of FantasyPros in each stat forecast for Props {"rec_yds": .5, …}
+    stat_weights: dict = field(default_factory=dict)
     # Optimizer defaults (Classic GPP)
     n_lineups: int = 20
     min_salary: int = 49000

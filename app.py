@@ -157,7 +157,9 @@ with st.sidebar:
                                    "projection automatically on every Refresh.")
         yid = st.text_input("Yahoo Client ID (optional)", S.yahoo_client_id, type="password")
         ysec = st.text_input("Yahoo Client Secret (optional)", S.yahoo_client_secret, type="password")
-        st.caption("Blend weights for the **Combined** projection")
+        st.caption("Blend weights for the **Combined** projection" +
+                   (" — *tested per-position weights from Evidence are in use; these apply only where none exist*"
+                    if S.pos_weights else ""))
         c1, c2, c3 = st.columns(3)
         wp = c1.number_input("Yours", 0.0, 1.0, S.w_paid, 0.05, help="Your projections: FantasyPros API (key in Settings), or a pasted table / CSV")
         ws = c2.number_input("Sleeper", 0.0, 1.0, S.w_sleeper, 0.05)
@@ -269,7 +271,10 @@ with tab_week:
         names = {"dk_id": "dk_id", "name": "Player", "pos": "Pos", "team": "Team", "opp": "Opp", "salary": "Salary",
                  "injury": "Injury", "proj": "Combined", "value": "Pts/$1K", "proj_paid": "Yours",
                  "proj_sleeper": "Sleeper", "proj_model": "Model", "pct_rostered_yahoo": "Yahoo %"}
-        w = f"Yours {S.w_paid:.0%} · Sleeper {S.w_sleeper:.0%} · Model {S.w_model:.0%}"
+        w = (f"Yours {S.w_paid:.0%} · Sleeper {S.w_sleeper:.0%} · Model {S.w_model:.0%}" if not S.pos_weights else
+             "tested per position: " + "; ".join(f"{ps} " + " ".join(
+                 f"{ {'paid': 'Yours', 'sleeper': 'Sleeper', 'model': 'Model'}.get(k, k)} {v:.0%}" for k, v in ww.items())
+                 for ps, ww in S.pos_weights.items()))
         helps = {
             "Combined": f"The projection lineups are built from: weighted average of the sources ({w}), re-spread over "
                         f"whichever sources cover the player. Questionable players × {S.questionable_haircut}. "
@@ -475,6 +480,22 @@ def consensus_lines(raw):
     return odds.consensus(raw)
 
 
+def fp_blend(fc, season, week):
+    """Mix FantasyPros' stat lines into the stat forecasts by the tested shares (if any)."""
+    if fc is None or not (S.fantasypros_api_key and S.stat_weights):
+        return fc
+    try:
+        from beatnfl import research as _r
+        from beatnfl.sources import fantasypros as _fp
+        fpdf, _ = _fp.projections(S.fantasypros_api_key, season, week, offline=offline)
+        fc, n = _r.blend_fp_stats(fc, fpdf, S.stat_weights)
+        ss["fp_blend_note"] = f"{n} players' stat forecasts include FantasyPros (" + ", ".join(
+            f"{k.replace('_', ' ')} {v:.0%}" for k, v in S.stat_weights.items() if v) + ", from Evidence)."
+    except StepError as e:
+        ss["fp_blend_note"] = "FantasyPros stats not mixed in: " + e.what
+    return fc
+
+
 # ------------------------------------------------------------------ GAMES
 with tab_games:
     st.caption("Information only. The game model has **not** beaten closing lines historically — see Evidence. "
@@ -579,7 +600,7 @@ with tab_props:
                             "pct_rostered": "yahoo_pct_rostered", "pct_change": "yahoo_pct_change", "status_raw": "yahoo_status"})
                     except StepError as e:
                         st.warning("Yahoo data skipped: " + e.what)
-                ss["fc"], ss["pm"], ss["fc_week"] = fc, pm, (season, week)
+                ss["fc"], ss["pm"], ss["fc_week"] = fp_blend(fc, season, week), pm, (season, week)
                 for w in warns:
                     st.warning(w)
             except StepError as e:
@@ -607,6 +628,8 @@ with tab_props:
             fv = fv[fv.Player.str.contains(fq.strip(), case=False, regex=False)]
         fv = fv[[c for c in fv.columns if not (pd.api.types.is_numeric_dtype(fv[c]) and fv[c].isna().all())]]
         show(fv, {k: v for k, v in fcfg.items() if k in fv.columns}, height=420)
+        if ss.get("fp_blend_note") and S.stat_weights:
+            st.caption(ss["fp_blend_note"])
         st.caption("Blank (None) = that stat isn't forecast for the player's position. Pick a position to see just its stats. "
                    "Click a column header to sort.")
 
@@ -631,7 +654,8 @@ with tab_props:
                     if ss.get("fc") is None or ss.get("fc_week") != (season, week):
                         from beatnfl.models import train
                         pm, dm, meta = train.get_models(offline=offline)
-                        ss["fc"], _ = train.forecast_week(season, week, None, pm, lines, offline=offline)
+                        fc0, _ = train.forecast_week(season, week, None, pm, lines, offline=offline)
+                        ss["fc"] = fp_blend(fc0, season, week)
                         ss["pm"], ss["fc_week"] = pm, (season, week)
                     board, info = research.props_board(S.odds_api_key, season, week, ss["fc"], ss["pm"], mk,
                                                        offline=offline)
@@ -884,35 +908,71 @@ with tab_evidence:
         st.caption(f"Average miss on the final margin: market {g['mae_margin']['spread_line']:.2f}, model "
                    f"{g['mae_margin']['model_spread']:.2f} points. On the total: market {g['mae_total']['total_line']:.2f}, "
                    f"model {g['mae_total']['model_total']:.2f}. The market is more accurate.")
-    st.markdown("**Sleeper vs in-house model**")
-    st.caption("Downloads Sleeper's own published projections for past weeks and scores them, the model, and every "
-               "blend of the two against what actually happened — so the Sleeper/Model weights come from evidence.")
-    if st.button("Test Sleeper vs model (≈5–10 min)"):
+    st.markdown("**FantasyPros vs Sleeper vs model — which to trust, by position**")
+    st.caption("Scores each source's published weekly projections against what actually happened (the model is "
+               "trained only on earlier seasons), then finds the blend with the smallest miss for each position — and, "
+               "for props, how much of FantasyPros' stat lines to mix into the model's stat forecasts.")
+    if st.button("Run the source test (≈10–15 min)"):
         from beatnfl import backtest
-        with st.spinner("Downloading past Sleeper projections and testing…"):
+        with st.spinner("Downloading past projections and testing…"):
             try:
-                backtest.sleeper_compare(offline=offline, progress=lambda m: None)
+                backtest.source_compare(S.fantasypros_api_key, current_weights={"paid": S.w_paid, "sleeper": S.w_sleeper,
+                                                                                 "model": S.w_model}, offline=offline,
+                                        progress=lambda m: None)
             except StepError as e:
                 st.error(e.as_text())
-    sc = sorted(glob.glob(str(_H / "evidence" / "sleeper_compare_*.json")))
-    if sc:
-        c = json.loads(Path(sc[-1]).read_text())
-        if c.get("n"):
-            best = float(c["best_model_weight"])
-            st.markdown(f"{c['n']:,} player-games, seasons {', '.join(map(str, c['seasons']))}: lowest error with "
-                        f"**{best:.0%} model / {1 - best:.0%} Sleeper**.")
-            t, tc = tidy(pd.DataFrame(c["by_pos"]), {"pos": "Pos", "n": "Player-games", "mae_model": "Miss: model",
-                                                     "mae_sleeper": "Miss: Sleeper"},
-                         ints=("Player-games",), two=("Miss: model", "Miss: Sleeper"))
+    scf = sorted(glob.glob(str(_H / "evidence" / "source_compare_*.json")))
+    if scf:
+        c = json.loads(Path(scf[-1]).read_text())
+        for n_ in c.get("notes", []):
+            st.info(n_)
+        if c.get("by_pos"):
+            st.markdown(f"{c['n']:,} player-games, seasons {', '.join(map(str, c['seasons']))} · sources: "
+                        f"{', '.join(c['sources'])} · FantasyPros weeks: {c.get('weeks_fantasypros', 0)}")
+            ren = {"pos": "Pos", "n": "Player-games", "mae_paid": "Miss: FantasyPros", "mae_sleeper": "Miss: Sleeper",
+                   "mae_model": "Miss: model", "mae_current_blend": "Miss: your weights", "mae_best_blend": "Miss: best blend",
+                   "w_paid": "FantasyPros wt", "w_sleeper": "Sleeper wt", "w_model": "Model wt"}
+            t, tc = tidy(pd.DataFrame(c["by_pos"]), ren, ints=("Player-games",),
+                         two=tuple(v for k, v in ren.items() if k.startswith("mae")), pct=("FantasyPros wt", "Sleeper wt", "Model wt"))
             show(t, tc)
-            tot = S.w_sleeper + S.w_model
-            st.caption(f"Current weights: Sleeper {S.w_sleeper:.2f} · Model {S.w_model:.2f} (Yours {S.w_paid:.2f} unchanged).")
-            if st.button("Use these weights"):
-                S.w_model, S.w_sleeper = round(best * tot, 2), round((1 - best) * tot, 2)
+            if c.get("stats"):
+                st.markdown("**Props: FantasyPros' stat lines vs the model's** (average miss; share = best mix)")
+                t, tc = tidy(pd.DataFrame(c["stats"]), {"stat": "Stat", "n": "Player-games", "mae_model": "Miss: model",
+                             "mae_fantasypros": "Miss: FantasyPros", "mae_blend": "Miss: mix", "w_fantasypros": "FantasyPros share"},
+                             ints=("Player-games",), two=("Miss: model", "Miss: FantasyPros", "Miss: mix"), pct=("FantasyPros share",))
+                show(t, tc)
+            u1, u2, _ = st.columns([1.3, 1.3, 3])
+            if u1.button("Use these weights", type="primary"):
+                S.pos_weights = c.get("weights", {})
+                S.stat_weights = c.get("stat_weights", {})
                 S.save()
-                st.success(f"Saved: Sleeper {S.w_sleeper:.2f} · Model {S.w_model:.2f}. Click ⟳ Refresh to apply.")
-        else:
-            st.caption(c.get("note", "Test returned no data."))
+                st.success("Saved. Combined now uses these weights per position; Props mixes in FantasyPros' stats "
+                           "where it tested better. Click ⟳ Refresh to apply.")
+            if (S.pos_weights or S.stat_weights) and u2.button("Back to simple weights"):
+                S.pos_weights, S.stat_weights = {}, {}
+                S.save()
+                st.success("Back to the single weights in Settings. Click ⟳ Refresh to apply.")
+    elif S.pos_weights:
+        st.caption("Tested per-position weights are in use.")
+    with st.expander("Live check — your own frozen pregame projections, graded after the games"):
+        if st.button("Grade live weights"):
+            from beatnfl import backtest
+            lw = backtest.live_weights(offline=offline)
+            if lw.get("weeks", 0) < 3:
+                st.info(f"{lw.get('weeks', 0)} finished week(s) graded so far — weights are suggested after 3. "
+                        "Each Refresh before kickoff freezes the numbers for this.")
+            else:
+                t, tc = tidy(pd.DataFrame(lw["by_pos"]), {"pos": "Pos", "n": "Player-games", "mae_paid": "Miss: FantasyPros",
+                             "mae_sleeper": "Miss: Sleeper", "mae_model": "Miss: model", "mae_best_blend": "Miss: best blend",
+                             "w_paid": "FantasyPros wt", "w_sleeper": "Sleeper wt", "w_model": "Model wt"},
+                             ints=("Player-games",), two=("Miss: FantasyPros", "Miss: Sleeper", "Miss: model", "Miss: best blend"),
+                             pct=("FantasyPros wt", "Sleeper wt", "Model wt"))
+                show(t, tc)
+                ss["live_w"] = lw["weights"]
+        if ss.get("live_w") and st.button("Use live weights"):
+            S.pos_weights = ss["live_w"]
+            S.save()
+            st.success("Saved. Click ⟳ Refresh to apply.")
     mab = APP_ROOT / "evidence" / "matchup_ab_test.json"
     if mab.exists():
         m = json.loads(mab.read_text())

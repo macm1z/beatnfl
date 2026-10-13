@@ -44,6 +44,8 @@ Tabs: **This week** (pool and lineups) · **Saved lineups** (rename, delete, rem
 
 **FantasyPros API (recommended if you're an MVP/HOF member):** paste your production key from secure.fantasypros.com/api-keys into **Settings → FantasyPros API key**. Every Refresh then pulls FantasyPros' weekly projections and converts their projected stats to DraftKings points for the **Yours** column — no pasting. A table you paste on *Load data* replaces them for that refresh. A free (sample-data) key is detected and reported, never used as if complete.
 
+**Tested weights (Evidence → Run the source test):** scores FantasyPros', Sleeper's and the model's past weekly projections against what actually happened and picks the best blend for each position, plus how much of FantasyPros' stat lines to mix into the props forecasts. **Use these weights** applies them; **Back to simple weights** undoes it. If your key can't fetch past weeks, the test runs on Sleeper and the model, and FantasyPros is graded live instead: every Refresh freezes the numbers, and after 3 finished weeks *Live check → Grade live weights* suggests weights from those real pregame projections.
+
 **Optional inputs, all dropped in `~/BeatNFL/inbox`:**
 - **Paid projections:** drop your site's DK projection CSV in the inbox. Columns are detected and shown.
 - **Fallback slate:** if DraftKings blocks the automatic download, drop `DKSalaries.csv` in the inbox. The app uses it automatically and says so. To get it: DraftKings → any NFL Classic contest → Export to CSV.
@@ -128,4 +130,4 @@ Two checks only run on your computer, because their sources were blocked from th
 - `~/BeatNFL/evidence` — test results
 - `~/BeatNFL/beatnfl.log` — technical detail for any failure
 
-Tests: `.venv/bin/python -m pytest -q tests` (34 offline tests; `BEATNFL_FULL=1` adds 4 end-to-end tests that click every button).
+Tests: `.venv/bin/python -m pytest -q tests` (37 offline tests; `BEATNFL_FULL=1` adds 5 end-to-end tests that click every button).
