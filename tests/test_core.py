@@ -545,11 +545,14 @@ def test_app_recovers_from_stale_modules_after_update(tmp_path, monkeypatch):
         monkeypatch.setitem(sys.modules, k, v := saved[k])
     monkeypatch.setattr(beatnfl, "__version__", "0.0-old")
     monkeypatch.delattr(old_storage, "duplicate_sets")
-    at = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"), default_timeout=120)
-    at.run()
-    assert not at.exception, [e.value for e in at.exception]
-    import sys
-    assert hasattr(sys.modules["beatnfl.storage"], "duplicate_sets")
+    try:
+        at = AppTest.from_file(str(Path(__file__).resolve().parent.parent / "app.py"), default_timeout=120)
+        at.run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert hasattr(sys.modules["beatnfl.storage"], "duplicate_sets")
+    finally:   # forget modules first imported during the reload, so later tests all share the original copies
+        for k in [m for m in sys.modules if (m == "beatnfl" or m.startswith("beatnfl.")) and m not in saved]:
+            del sys.modules[k]
 
 
 
