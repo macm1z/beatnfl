@@ -35,9 +35,11 @@ You can also open the app with **Start BeatNFL.command** (or `.bat`). It opens i
 
 ## Each week
 
-1. **This week → Run.** This loads and checks the slate, then injuries, lines and projections, then blends them and freezes the forecast. Each step shows ✅ / ⚠️ / ❌ with what to do next.
-2. **Review the pool.** Lock or exclude players. Blank means no projection, never 0.
-3. **Build, save & export.** You get N lineups, the saved set number, a DK upload CSV and a readable CSV.
+Tabs: **This week** (pool and lineups) · **Saved lineups** (rename, delete, remove duplicates, filter by player) · **Games** (spread, moneyline and total chances: market vs model) · **Props** · **My Yahoo team** · **Evidence** · **Load data** · **Data status**.
+
+1. **⟳ Refresh** (top right). This loads and checks the slate, then injuries, lines and projections, then blends them into the **Combined** projection and freezes the forecast. Anything that needs attention shows in a fold-out on *This week*; the full step log is on *Load data*, which is also where you pick a different slate, upload a salary file or paste your own projections.
+2. **Review the pool.** Filter by position or team, lock or exclude players. Hover a column name to see what it means.
+3. **⚙ Build lineups**, then **💾 Save** if you want to keep them. Lineups are ranked best projection first. Saving writes the DK upload CSV and a readable CSV to `~/BeatNFL/exports`; an identical set is never saved twice. Download buttons work without saving.
 4. Upload `DK_upload_….csv` on DraftKings yourself (Upload Lineups).
 
 **Optional inputs, all dropped in `~/BeatNFL/inbox`:**

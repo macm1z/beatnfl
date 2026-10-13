@@ -129,6 +129,9 @@ def projection_runs_for_grading() -> pd.DataFrame:
 def save_lineup_set(name: str, slate_id: int, run_id: int, settings: dict, lineups: list[list[str]],
                     pool: pd.DataFrame, status: str, diagnostics: list[str]) -> int:
     idx = pool.set_index("dk_id")
+    dup = find_same_set(slate_id, lineups)
+    if dup is not None:
+        return dup
     with db() as c:
         cur = c.execute("INSERT INTO lineup_sets(name,slate_id,projection_run_id,created_utc,updated_utc,settings,status,"
                         "diagnostics) VALUES(?,?,?,?,?,?,?,?)",
@@ -142,6 +145,40 @@ def save_lineup_set(name: str, slate_id: int, run_id: int, settings: dict, lineu
     if len(got["lineups"]) != len(lineups):
         raise RuntimeError("Save could not be confirmed (read-back mismatch).")
     return sid
+
+
+def find_same_set(slate_id: int, lineups: list[list[str]]) -> int | None:
+    """An already-saved set on this slate with exactly the same lineups (order ignored), if any."""
+    want = sorted(json.dumps(sorted(lu)) for lu in lineups)
+    with db() as c:
+        ids = [r["id"] for r in c.execute("SELECT id FROM lineup_sets WHERE slate_id=? AND "
+                                          "(SELECT COUNT(*) FROM lineups WHERE set_id=lineup_sets.id)=?",
+                                          (slate_id, len(lineups))).fetchall()]
+        for i in ids:
+            got = sorted(json.dumps(sorted(json.loads(r["ids"]))) for r in
+                         c.execute("SELECT ids FROM lineups WHERE set_id=?", (i,)).fetchall())
+            if got == want:
+                return i
+    return None
+
+
+def duplicate_sets() -> dict[int, int]:
+    """{set_id: older set_id it duplicates} — same slate, same lineups (order ignored)."""
+    with db() as c:
+        rows = c.execute("SELECT l.id, l.slate_id, x.ids FROM lineup_sets l JOIN lineups x ON x.set_id=l.id ORDER BY l.id").fetchall()
+    sig: dict[int, list] = {}
+    slate: dict[int, int] = {}
+    for r in rows:
+        sig.setdefault(r["id"], []).append(json.dumps(sorted(json.loads(r["ids"]))))
+        slate[r["id"]] = r["slate_id"]
+    seen, out = {}, {}
+    for i in sorted(sig):
+        k = (slate[i], tuple(sorted(sig[i])))
+        if k in seen:
+            out[i] = seen[k]
+        else:
+            seen[k] = i
+    return out
 
 
 def list_lineup_sets() -> pd.DataFrame:

@@ -491,12 +491,44 @@ def test_props_view_readable_consensus_and_filters():
     v = research.props_view(b)
     assert len(v) == 3                                         # one consensus row per player/prop
     dl = v[v.Player == "Drake London"].iloc[0]
-    assert dl.Prop == "Rec yds 74.5" and dl.Book == "3 books" and dl["Model %"] == "63%" and dl.Lean == "Over ★"
+    assert dl.Prop == "Rec yds 74.5" and dl.Book == "3 books" and dl["Model %"] == 63 and dl.Lean == "Over ★"
     db = v[v.Player == "Denzel Boston"].iloc[0]
-    assert db.Lean == "—" and db["Book %"].endswith("*")   # TD 'No' leans are not shown (mostly book margin)
+    assert db.Lean == "—" and db.Prop.endswith("*")   # TD 'No' leans are not shown (mostly book margin)
     assert v[v.Player == "Chris Moore"].iloc[0].Lean == "Yes ★"
     g = research.props_view(b, game="BAL @ CLE", book="Fanatics")
-    assert list(g.Player) == ["Denzel Boston"] and g.iloc[0].Odds == "+175"
+    assert list(g.Player) == ["Denzel Boston"] and g.iloc[0].Odds == 175
     s = research.props_view(b, book="Caesars")
-    assert list(s.Book) == ["Caesars"] and s.iloc[0].Odds == "-120"
+    assert list(s.Book) == ["Caesars"] and s.iloc[0].Odds == -120
     assert list(research.props_view(b, sort="Sportsbook").Book)[0] == "1 book"
+
+
+# ---------------------------------------------------------------- review-board fixes (v1.5)
+def test_build_does_not_save_and_save_skips_duplicates():
+    from beatnfl import pipeline
+    ls, pool = pool_from_fixture()
+    sid = storage.save_slate(ls, 2026, 6)
+    run_id = storage.save_projection_run(sid, pool, "test", {})
+    run = pipeline.WeekRun.__new__(pipeline.WeekRun)
+    run.pool, run.slate_id, run.run_id, run.season, run.week = pool, sid, run_id, 2026, 6
+    before = len(storage.list_lineup_sets())
+    out = pipeline.build_lineups(run, optimizer.OptSettings(n_lineups=4, randomness=0))
+    assert out["set_id"] is None and len(storage.list_lineup_sets()) == before      # building never saves
+    proj = pool.set_index("dk_id").proj
+    tot = [proj.loc[lu].sum() for lu in out["result"].lineups]
+    assert tot == sorted(tot, reverse=True)                                          # rank 1 = best projection
+    a = pipeline.save_lineups(run, out, "x", export_files=False)
+    b = pipeline.save_lineups(run, out, "x again", export_files=False)
+    assert a["set_id"] == b["set_id"] and b["duplicate"] and len(storage.list_lineup_sets()) == before + 1
+    assert storage.duplicate_sets() == {} or a["set_id"] not in storage.duplicate_sets()
+
+
+def test_game_probabilities_market_and_model():
+    from beatnfl.sources import odds
+    rows = []
+    for bk, hs, as_, mh, ma, ov, un in (("dk", -110, -110, -150, 130, -105, -115), ("fd", -108, -112, -155, 135, -110, -110)):
+        for mk, side, line, price in (("spreads", "KC", -3.0, hs), ("spreads", "LAC", 3.0, as_), ("h2h", "KC", None, mh),
+                                      ("h2h", "LAC", None, ma), ("totals", "Over", 44.5, ov), ("totals", "Under", 44.5, un)):
+            rows.append({"home": "KC", "away": "LAC", "book": bk, "market": mk, "side": side, "line": line, "price": price})
+    m = odds.market_summary(pd.DataFrame(rows)).iloc[0]
+    assert m.spread_nv == 3.0 and m.total == 44.5 and m.books == 2
+    assert 0.49 < m.p_home_cover < 0.51 and 0.58 < m.p_home_win < 0.61 and 0.48 < m.p_over < 0.51

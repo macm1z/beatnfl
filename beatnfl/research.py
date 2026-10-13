@@ -21,33 +21,121 @@ CORE_PROP_MARKETS = ["player_pass_yds", "player_rush_yds", "player_reception_yds
                      "player_anytime_td"]
 
 
-def games_table(season: int, week: int, lines: pd.DataFrame | None = None, offline=False) -> pd.DataFrame:
+TOTAL_SD = 13.8   # spread of final game totals around the expected total (NFL, recent seasons)
+
+
+def _phi(x: float) -> float:
+    from math import erf, sqrt
+    return 0.5 * (1 + erf(x / sqrt(2)))
+
+
+def _odds_txt(v) -> str:
+    try:
+        v = int(round(float(v)))
+    except (TypeError, ValueError):
+        return ""
+    return f"+{v}" if v > 0 else str(v)
+
+
+def _line_txt(team: str, handicap: float) -> str:
+    if pd.isna(handicap):
+        return ""
+    return f"{team} PK" if abs(handicap) < 0.05 else f"{team} {handicap:+g}"
+
+
+def games_data(season: int, week: int, raw_lines: pd.DataFrame | None = None, offline=False) -> pd.DataFrame:
+    """One row per game: market lines/prices (Odds API median of books, else the nflverse schedule),
+    the market's no-vig probabilities, and the model's numbers."""
     sched = nv.schedules(offline=offline)
     g = gm.run(sched)
     g = g[(g.season == season) & (g.week == week)].copy()
-    if lines is not None and not lines.empty:
-        c = lines.rename(columns={"spread_nv": "mkt_spread", "total": "mkt_total"})[["home", "away", "mkt_spread", "mkt_total"]]
-        g = g.merge(c, on=["home", "away"], how="left")
-        g["line_source"] = np.where(g.mkt_spread.notna(), "Odds API (median of books)", "nflverse schedule")
-        g["mkt_spread"] = g.mkt_spread.fillna(g.spread_line)
-        g["mkt_total"] = g.mkt_total.fillna(g.total_line)
-    else:
-        g["mkt_spread"], g["mkt_total"], g["line_source"] = g.spread_line, g.total_line, "nflverse schedule"
-    g["blend_spread"] = g.mkt_spread + gm.BLEND_W * (g.model_spread - g.mkt_spread)
-    g["blend_total"] = g.mkt_total + gm.BLEND_W * (g.model_total - g.mkt_total)
-    g["p_home_cover"] = [gm.cover_prob(m, l) if pd.notna(l) else np.nan for m, l in zip(g.blend_spread, g.mkt_spread)]
+    sc = sched.set_index("game_id")
+    for c in ("gameday", "gametime", "home_moneyline", "away_moneyline", "home_spread_odds", "away_spread_odds",
+              "over_odds", "under_odds"):
+        g[c] = g.game_id.map(sc[c]) if c in sc else np.nan
+    g["src"] = "schedule"
+    m = odds.market_summary(raw_lines) if raw_lines is not None else pd.DataFrame()
+    if not m.empty:
+        g = g.merge(m, on=["home", "away"], how="left")
+        live = g.spread_nv.notna() | g.total.notna() | g.p_home_win.notna()
+        g.loc[live, "src"] = "odds_api"
+    for c in ("spread_nv", "home_spread_price", "away_spread_price", "p_home_cover", "ml_home", "ml_away", "p_home_win",
+              "total", "over_price", "under_price", "p_over"):
+        if c not in g:
+            g[c] = np.nan
+    # fall back to the schedule's (nflverse) lines and prices where the Odds API had nothing
+    g["spread_nv"] = g.spread_nv.fillna(g.spread_line)
+    g["total"] = g.total.fillna(g.total_line)
+    g["home_spread_price"] = g.home_spread_price.fillna(g.home_spread_odds)
+    g["away_spread_price"] = g.away_spread_price.fillna(g.away_spread_odds)
+    g["ml_home"], g["ml_away"] = g.ml_home.fillna(g.home_moneyline), g.ml_away.fillna(g.away_moneyline)
+    g["over_price"], g["under_price"] = g.over_price.fillna(g.over_odds), g.under_price.fillna(g.under_odds)
 
-    def fav(r):
-        if pd.isna(r.mkt_spread):
-            return "no line yet"
-        t = r.home if r.mkt_spread > 0 else r.away
-        return f"{t} -{abs(r.mkt_spread):g}"
-    out = pd.DataFrame({
-        "Game": g.away + " @ " + g.home, "Market": [fav(r) for r in g.itertuples()],
-        "Market total": g.mkt_total, "Model margin (home)": g.model_spread.round(1),
-        "Model total": g.model_total.round(1), "Blend margin": g.blend_spread.round(1),
-        "Blend total": g.blend_total.round(1), "P(home covers)": g.p_home_cover.round(3), "Lines from": g.line_source,
+    def nv2(a, b):
+        p = odds.no_vig(odds.implied_prob(a), odds.implied_prob(b))
+        return np.nan if p is None else p
+    g["p_home_cover"] = g.p_home_cover.fillna(pd.Series([nv2(a, b) for a, b in zip(g.home_spread_price, g.away_spread_price)], index=g.index))
+    g["p_home_win"] = g.p_home_win.fillna(pd.Series([nv2(a, b) for a, b in zip(g.ml_home, g.ml_away)], index=g.index))
+    g["p_over"] = g.p_over.fillna(pd.Series([nv2(a, b) for a, b in zip(g.over_price, g.under_price)], index=g.index))
+    g["blend_spread"] = g.spread_nv + gm.BLEND_W * (g.model_spread - g.spread_nv)
+    g["blend_total"] = g.total + gm.BLEND_W * (g.model_total - g.total)
+    return g.reset_index(drop=True)
+
+
+def games_table(season: int, week: int, raw_lines: pd.DataFrame | None = None, offline=False) -> pd.DataFrame:
+    """Readable summary, one row per game, both teams' lines shown."""
+    g = games_data(season, week, raw_lines, offline)
+
+    def fav(home, away, m):
+        if pd.isna(m):
+            return ""
+        return "Pick'em" if abs(m) < 0.05 else f"{home if m > 0 else away} -{abs(m):.1f}"
+    kick = pd.to_datetime(g.gameday.astype(str) + " " + g.gametime.astype(str), errors="coerce")
+    return pd.DataFrame({
+        "Game": g.away + " @ " + g.home,
+        "Kickoff (ET)": [k.strftime("%a %-I:%M %p") if pd.notna(k) else "" for k in kick],
+        "Spread": [f"{_line_txt(a, s)} · {_line_txt(h, -s)}" if pd.notna(s) else "no line yet"
+                   for a, h, s in zip(g.away, g.home, g.spread_nv)],
+        "Moneyline": [f"{a} {_odds_txt(ma)} · {h} {_odds_txt(mh)}" if pd.notna(ma) and pd.notna(mh) else ""
+                      for a, h, ma, mh in zip(g.away, g.home, g.ml_away, g.ml_home)],
+        "Total": g.total,
+        "Model spread": [fav(h, a, m) for h, a, m in zip(g.home, g.away, g.model_spread)],
+        "Model total": g.model_total.round(1),
+        "_src": g.src,
     })
+
+
+def game_probs(season: int, week: int, raw_lines: pd.DataFrame | None = None, offline=False) -> pd.DataFrame:
+    """One row per side of every spread, moneyline and total: the market's no-vig chance and the model's.
+
+    The model's chance starts from the market's and moves by how far the (market-weighted) model
+    number sits from the line, so a difference here is the model's disagreement only — not an
+    artefact of a simple normal curve mis-pricing favourites."""
+    g = games_data(season, week, raw_lines, offline)
+    rows = []
+    for r in g.itertuples():
+        game = f"{r.away} @ {r.home}"
+        if pd.notna(r.spread_nv) and pd.notna(r.p_home_cover):
+            d = gm.cover_prob(r.blend_spread, r.spread_nv) - 0.5
+            ph = float(np.clip(r.p_home_cover + d, 0.01, 0.99))
+            rows += [(game, "Spread", _line_txt(r.home, -r.spread_nv), r.home_spread_price, r.p_home_cover, ph),
+                     (game, "Spread", _line_txt(r.away, r.spread_nv), r.away_spread_price, 1 - r.p_home_cover, 1 - ph)]
+        if pd.notna(r.p_home_win):
+            sd = 13.4
+            d = _phi(r.blend_spread / sd) - _phi(r.spread_nv / sd) if pd.notna(r.spread_nv) else 0.0
+            ph = float(np.clip(r.p_home_win + d, 0.01, 0.99))
+            rows += [(game, "Moneyline", f"{r.home} win", r.ml_home, r.p_home_win, ph),
+                     (game, "Moneyline", f"{r.away} win", r.ml_away, 1 - r.p_home_win, 1 - ph)]
+        if pd.notna(r.total) and pd.notna(r.p_over):
+            d = _phi((r.blend_total - r.total) / TOTAL_SD) - 0.5
+            po = float(np.clip(r.p_over + d, 0.01, 0.99))
+            rows += [(game, "Total", f"Over {r.total:g}", r.over_price, r.p_over, po),
+                     (game, "Total", f"Under {r.total:g}", r.under_price, 1 - r.p_over, 1 - po)]
+    out = pd.DataFrame(rows, columns=["Game", "Bet type", "Side", "Odds", "Market %", "Model %"])
+    out["Odds"] = pd.to_numeric(out.Odds, errors="coerce")
+    out["Market %"] = (pd.to_numeric(out["Market %"]) * 100).round(1)
+    out["Model %"] = (pd.to_numeric(out["Model %"]) * 100).round(1)
+    out["Difference"] = (out["Model %"] - out["Market %"]).round(1)
     return out
 
 
@@ -249,14 +337,13 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
     out = pd.DataFrame({
         "Game": d.game.values,
         "Player": d.player.values,
-        "Prop": [("Anytime TD" if s == "any_td" else f"{STAT_NAMES.get(s, s)} {l:g}") for s, l in zip(d.stat, d.line)],
+        "Prop": [("Anytime TD*" if s == "any_td" else f"{STAT_NAMES.get(s, s)} {l:g}") for s, l in zip(d.stat, d.line)],
         "Book": d.Book.values,
-        "Odds": [_odds(p) for p in d.price],
-        "Model median": [("" if s == "any_td" or pd.isna(m) else f"{m:.1f}") for s, m in
-                         zip(d.stat, d.model_median if "model_median" in d else d.model_pred)],
-        "Model %": [("" if pd.isna(p) else f"{p * 100:.0f}%") for p in d.model_p_over],
-        "Book %": [("" if pd.isna(p) else f"{p * 100:.0f}%" + ("*" if s == "any_td" else ""))
-                   for p, s in zip(d.book_p_over, d.stat)],
+        "Odds": pd.to_numeric(d.price, errors="coerce").round().values,
+        "Model median": [(np.nan if s == "any_td" else m) for s, m in zip(d.stat, d.model_median)],
+        "Model %": (d.model_p_over * 100).round(1).values,
+        "Book %": (d.book_p_over * 100).round(1).values,
+        "Difference": diff.round(1).values,
         "Lean": [label(i) for i in d.index],
         "_diff": diff.abs().values, "_book": d.Book.values,
     })

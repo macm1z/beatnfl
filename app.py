@@ -1,4 +1,4 @@
-"""BeatNFL — Streamlit app. Start with:  python -m beatnfl app   (or the Start BeatNFL shortcut)."""
+"""BeatNFL — Streamlit app. Start with:  python -m beatnfl app   (or the BeatNFL app / Start BeatNFL shortcut)."""
 
 from __future__ import annotations
 
@@ -27,10 +27,23 @@ if not (APP_ROOT / "beatnfl").exists():  # launched through a wrapper script
     import beatnfl as _bn
     APP_ROOT = Path(_bn.__file__).resolve().parent.parent
 ICON = {"ok": "✅", "warn": "⚠️", "fail": "❌", "skip": "⏭️"}
+STATUS_TXT = {"Q": "Questionable", "D": "Doubtful", "O": "Out", "IR": "IR", "OUT": "Out", "P": "Probable"}
+
+st.markdown("""<style>
+.stTabs [role="tablist"] { gap: 8px; flex-wrap: wrap; border-bottom: none; }
+.stTabs [data-testid="stTab"] { border: 1px solid rgba(139,148,158,.45); border-radius: 8px; padding: 5px 14px;
+  height: auto; margin: 0; }
+.stTabs [data-testid="stTab"][aria-selected="true"] { border-color: #3FB950; background: rgba(63,185,80,.12); }
+.stTabs [role="tablist"] > div:not([data-testid="stTab"]) { display: none; }
+</style>""", unsafe_allow_html=True)
+
+
+def step_line(x) -> str:
+    return f"{ICON[x.status]} **{x.step}** — {x.message}" + (f"  \n  ➜ {x.fix}" if x.fix else "")
 
 
 def show_steps(steps):
-    """One compact checklist. Problems are listed first with their fix; routine steps sit underneath."""
+    """Full checklist (Load data page). Problems first with their fix; routine steps underneath."""
     fails = [x for x in steps if x.status == "fail"]
     warns = [x for x in steps if x.status == "warn"]
     head = (f"❌ {len(fails)} step(s) failed" if fails else
@@ -38,17 +51,28 @@ def show_steps(steps):
     with st.container(border=True):
         st.markdown(f"**{head}**")
         for x in fails + warns:
-            st.markdown(f"{ICON[x.status]} **{x.step}** — {x.message}" + (f"  \n  ➜ {x.fix}" if x.fix else ""))
+            st.markdown(step_line(x))
         rest = [x for x in steps if x.status in ("ok", "skip")]
         if rest:
             with st.expander(f"Details ({len(rest)} steps)", expanded=not (fails or warns)):
                 for x in rest:
-                    st.markdown(f"{ICON[x.status]} **{x.step}** — {x.message}" + (f"  \n  ➜ {x.fix}" if x.fix else ""))
+                    st.markdown(step_line(x))
 
 
-def tidy(df: pd.DataFrame, rename: dict, ints=(), one=(), two=(), pct=(), money=()) -> tuple[pd.DataFrame, dict]:
-    """Readable table: friendly column names, empty columns dropped, sensible number formats.
-    Returns (frame, column_config) for st.data_editor; read-only tables go through show()."""
+def show_problems(steps):
+    """Prediction pages: only what needs attention, folded away."""
+    bad = [x for x in steps if x.status in ("fail", "warn")]
+    if bad:
+        n_f = sum(x.status == "fail" for x in bad)
+        with st.expander(f"{'❌' if n_f else '⚠️'} {len(bad)} thing(s) to check from the last refresh"):
+            for x in bad:
+                st.markdown(step_line(x))
+            st.caption("Full log: *Load data* tab.")
+
+
+def tidy(df: pd.DataFrame, rename: dict, ints=(), one=(), two=(), pct=(), money=(), helps=None) -> tuple[pd.DataFrame, dict]:
+    """Readable table: friendly column names, empty columns dropped, numbers kept numeric (so sorting works)
+    and formatted through column_config. Returns (frame, column_config)."""
     d = df[[c for c in rename if c in df]].rename(columns=rename).copy()
     fmts = {}
     for cols, fmt in ((ints, "%d"), (one, "%.1f"), (two, "%.2f"), (money, "$%d")):
@@ -64,22 +88,17 @@ def tidy(df: pd.DataFrame, rename: dict, ints=(), one=(), two=(), pct=(), money=
     for c in d.columns:
         if d[c].dtype == object or pd.api.types.is_string_dtype(d[c]):
             d[c] = d[c].astype(object).where(d[c].notna(), "").replace({"None": "", "nan": "", "<NA>": ""})
-    cfg = {c: st.column_config.NumberColumn(c, format=f) for c, f in fmts.items() if c in d.columns}
-    d.attrs["fmts"] = {c: f for c, f in fmts.items() if c in d.columns}
+    helps = helps or {}
+    cfg = {c: st.column_config.NumberColumn(c, format=f, help=helps.get(c)) for c, f in fmts.items() if c in d.columns}
+    for c, h in helps.items():
+        if c in d.columns and c not in cfg:
+            cfg[c] = st.column_config.Column(c, help=h)
     return d, cfg
 
 
 def show(d: pd.DataFrame, cfg: dict | None = None, **kw):
-    """Read-only table, already in a sensible order: formatted numbers, blank where a stat doesn't apply."""
-    fmts = d.attrs.get("fmts", {})
-    out = d.copy()
-    for c in out.columns:
-        f = fmts.get(c)
-        if f:
-            out[c] = [("" if pd.isna(v) else (f % v)) for v in out[c]]
-        elif out[c].dtype.kind == "f":
-            out[c] = ["" if pd.isna(v) else f"{v:g}" for v in out[c]]
-    st.dataframe(out, hide_index=True, width=kw.pop("width", "stretch"), **kw)
+    """Read-only table. Numbers stay numbers, so clicking a column header sorts correctly."""
+    st.dataframe(d, hide_index=True, width=kw.pop("width", "stretch"), column_config=cfg or {}, **kw)
 
 
 def slate_banner():
@@ -88,7 +107,21 @@ def slate_banner():
         sl = r.slate
         verified = "IDs verified" if sl.ids_verified else "IDs not yet verified vs official CSV"
         st.caption(f"**Slate:** {sl.slate.label if sl.slate else ''} · {r.season or '?'} week {r.week or '?'} · "
-                   f"source: {sl.route} ({sl.fetched_note}) · {verified}")
+                   f"{verified} · loaded {ss.get('run_at', '')}")
+    else:
+        st.caption("No slate loaded yet — click **⟳ Refresh**.")
+
+
+def week_picker(prefix: str):
+    """Season/week for Games and Props — the two pages stay on the same week."""
+    other = "p" if prefix == "g" else "g"
+
+    def sync():
+        ss[f"{other}_season"], ss[f"{other}_week"] = ss[f"{prefix}_season"], ss[f"{prefix}_week"]
+    c1, c2, _ = st.columns([1, 1, 4])
+    c1.number_input("Season", 2015, 2035, key=f"{prefix}_season", on_change=sync)
+    c2.number_input("Week", 1, 22, key=f"{prefix}_week", on_change=sync)
+    return int(ss[f"{prefix}_season"]), int(ss[f"{prefix}_week"])
 
 
 # ------------------------------------------------------------------ sidebar
@@ -100,16 +133,18 @@ with st.sidebar:
                             help="Free key at the-odds-api.com — powers live lines and props.")
         yid = st.text_input("Yahoo Client ID (optional)", S.yahoo_client_id, type="password")
         ysec = st.text_input("Yahoo Client Secret (optional)", S.yahoo_client_secret, type="password")
+        st.caption("Blend weights for the **Combined** projection")
         c1, c2, c3 = st.columns(3)
-        wp = c1.number_input("Paid wt", 0.0, 1.0, S.w_paid, 0.05)
-        ws = c2.number_input("Sleeper wt", 0.0, 1.0, S.w_sleeper, 0.05)
-        wm = c3.number_input("Model wt", 0.0, 1.0, S.w_model, 0.05)
-        qh = st.slider("Questionable haircut", 0.5, 1.0, S.questionable_haircut, 0.05)
+        wp = c1.number_input("Yours", 0.0, 1.0, S.w_paid, 0.05, help="Your paid projections (FantasyPros CSV or pasted table)")
+        ws = c2.number_input("Sleeper", 0.0, 1.0, S.w_sleeper, 0.05)
+        wm = c3.number_input("Model", 0.0, 1.0, S.w_model, 0.05)
+        qh = st.slider("Questionable haircut", 0.5, 1.0, S.questionable_haircut, 0.05,
+                       help="Questionable players' Combined projection is multiplied by this.")
         if st.button("Save settings"):
             S.odds_api_key, S.w_paid, S.w_sleeper, S.w_model, S.questionable_haircut = key, wp, ws, wm, qh
             S.yahoo_client_id, S.yahoo_client_secret = yid.strip(), ysec.strip()
             S.save()
-            st.success("Saved.")
+            st.success("Saved. Click ⟳ Refresh to apply new weights.")
     with st.expander("App updates"):
         from beatnfl import update as upd
         repo = st.text_input("GitHub repository (owner/name)", S.update_repo, key="upd_repo")
@@ -147,106 +182,165 @@ with st.sidebar:
                 st.info("Close the BeatNFL window and start it again to load the update.")
     offline = st.toggle("Offline mode (use cached data only)", False)
 
-tab_week, tab_saved, tab_yahoo, tab_research, tab_evidence, tab_status = st.tabs(
-    ["This week", "Saved lineups", "My Yahoo team", "Research: games & props", "Evidence", "Data status"])
+# default week for Games / Props
+if "g_season" not in ss:
+    from beatnfl.sources import nflverse as _nv
+    try:
+        _d = _nv.upcoming_week(_nv.schedules(offline=offline))
+    except Exception:  # noqa: BLE001
+        _d = (_nv.current_season(), 1)
+    ss["g_season"], ss["g_week"] = ss["p_season"], ss["p_week"] = int(_d[0]), int(_d[1])
+
+
+def _slate_choice():
+    """Draft group picked on the Load data page (None = main slate chosen automatically)."""
+    sl = ss.get("slates")
+    pick = ss.get("slate_pick")
+    if sl and pick:
+        labels = [s.label for s in sl]
+        if pick in labels:
+            return sl[labels.index(pick)].draft_group_id
+    return None
+
+
+# ------------------------------------------------------------------ header: slate + Refresh
+h1, h2 = st.columns([6, 1], vertical_alignment="center")
+with h1:
+    slate_banner()
+upload_mode = str(ss.get("slate_mode", "Automatic")).startswith("Upload")
+refresh = h2.button("⟳ Refresh", type="primary", width="stretch",
+                    disabled=upload_mode and ss.get("up_file") is None,
+                    help="Reload slate, salaries, injuries, projections and lines using the choices on the Load data tab.")
+if refresh:
+    up, paid, pasted = ss.get("up_file"), ss.get("paid_file"), ss.get("pasted_proj") or ""
+    status = st.status("Refreshing…", expanded=True)
+    r = pipeline.run_week(S, salary_file=up.getvalue() if (upload_mode and up) else None,
+                          draft_group_id=None if upload_mode else _slate_choice(),
+                          paid_file=paid.getvalue() if paid else (pasted.encode() if pasted.strip() else None),
+                          use_model=ss.get("use_model", True), offline=offline, progress=lambda m: status.write(m))
+    status.update(label="Done", state="complete", expanded=False)
+    ss["run"], ss["lineups"], ss["saved_info"] = r, None, None
+    ss["run_at"] = pd.Timestamp.now(tz="America/New_York").strftime("%a %-I:%M %p")
+    st.rerun()
+
+tab_week, tab_saved, tab_games, tab_props, tab_yahoo, tab_evidence, tab_load, tab_status = st.tabs(
+    ["This week", "Saved lineups", "Games", "Props", "My Yahoo team", "Evidence", "Load data", "Data status"])
 
 # ------------------------------------------------------------------ THIS WEEK
 with tab_week:
-    slate_banner()
-    st.subheader("1 · Load the week")
-    mode = st.radio("Slate source", ["Automatic (DraftKings)", "Upload DKSalaries.csv"], horizontal=True)
-    dg, up = None, None
-    if mode.startswith("Automatic"):
-        c1, c2 = st.columns([3, 1])
-        if c2.button("Find slates"):
-            try:
-                from beatnfl.sources import dk
-                ss["slates"] = dk.discover(offline=offline)
-            except StepError as e:
-                st.error(e.as_text())
-        if ss.get("slates"):
-            from beatnfl.sources import dk
-            main = dk.pick_main_slate(ss["slates"])
-            labels = [s.label for s in ss["slates"]]
-            pick = c1.selectbox("Slate", labels, index=labels.index(main.label))
-            dg = ss["slates"][labels.index(pick)].draft_group_id
-        else:
-            c1.caption("Main slate is chosen automatically. Click *Find slates* to pick a different one.")
-        st.caption(f"If DraftKings blocks the download, the newest DKSalaries*.csv in the inbox is used automatically.")
-    else:
-        up = st.file_uploader("DKSalaries.csv (DraftKings → NFL Classic contest → Export to CSV)", type="csv")
-    paid = st.file_uploader("Paid projections CSV (optional — newest file in the inbox is used otherwise)", type="csv")
-    pasted = st.text_area("…or paste a projections table (e.g. select Sharp's DFS table in your browser, copy, paste here)",
-                          height=90, key="pasted_proj")
-    use_model = st.checkbox("Include in-house model", True)
-
-    if st.button("▶ Run", type="primary", disabled=(mode.startswith("Upload") and up is None)):
-        status = st.status("Running…", expanded=True)
-        r = pipeline.run_week(S, salary_file=up.getvalue() if up else None, draft_group_id=dg,
-                              paid_file=paid.getvalue() if paid else (pasted.encode() if pasted.strip() else None), use_model=use_model, offline=offline,
-                              progress=lambda m: status.write(m))
-        status.update(label="Done", state="complete", expanded=False)
-        ss["run"], ss["lineups"] = r, None
-        st.rerun()
-
     r = ss.get("run")
-    if r:
-        show_steps(r.steps)
+    if not r:
+        st.info("Click **⟳ Refresh** (top right) to load this week's DraftKings slate, injuries and projections. "
+                "To use a different slate, an uploaded salary file or your own projections, set that up on the "
+                "**Load data** tab first.")
+    else:
+        show_problems(r.steps)
     if r and r.pool is not None and "proj" in r.pool:
-        st.subheader("2 · Player pool")
-        pool = r.pool
+        st.subheader("Player pool")
+        pool = r.pool.copy()
+        pool["injury"] = [(STATUS_TXT.get(str(s), str(s)) + (f" – {n}" if n and str(n) not in ("nan", "None") else ""))
+                          if s and str(s) not in ("nan", "None") else "" for s, n in
+                          zip(pool.get("status", ""), pool.get("injury_note", pd.Series("", index=pool.index)))]
         names = {"dk_id": "dk_id", "name": "Player", "pos": "Pos", "team": "Team", "opp": "Opp", "salary": "Salary",
-                 "status": "Status", "injury_note": "Injury", "proj": "Proj", "value": "Pts/$1K", "proj_paid": "Yours",
-                 "proj_sleeper": "Sleeper", "proj_model": "Model", "pct_rostered_yahoo": "Yahoo %", "sources": "Sources"}
-        view, cfg = tidy(pool, names, one=("Proj", "Yours", "Sleeper", "Model"), two=("Pts/$1K",), money=("Salary",),
-                         ints=("Yahoo %",))
+                 "injury": "Injury", "proj": "Combined", "value": "Pts/$1K", "proj_paid": "Yours",
+                 "proj_sleeper": "Sleeper", "proj_model": "Model", "pct_rostered_yahoo": "Yahoo %"}
+        w = f"Yours {S.w_paid:.0%} · Sleeper {S.w_sleeper:.0%} · Model {S.w_model:.0%}"
+        helps = {
+            "Combined": f"The projection lineups are built from: weighted average of the sources ({w}), re-spread over "
+                        f"whichever sources cover the player. Questionable players × {S.questionable_haircut}. "
+                        "Change weights in Settings (sidebar).",
+            "Pts/$1K": "Combined projection ÷ salary × 1,000 — points per $1,000 of salary.",
+            "Yours": "Your paid projections (FantasyPros CSV or pasted table, set on the Load data tab).",
+            "Sleeper": "Sleeper's free published projection, scored with DraftKings rules. How it compares to the "
+                       "model historically: Evidence tab → Sleeper vs model.",
+            "Model": "BeatNFL's own forecast. Gradient-boosted model trained on every NFL game since 2018 (nflverse): "
+                     "recent usage (snaps, targets, carries, weighted toward recent games), touches freed by injured "
+                     "teammates, team pass/run volume, the opponent's points allowed to the position, and the "
+                     "betting-implied team total. Accuracy: Evidence tab.",
+            "Injury": "Worst of DraftKings, Sleeper and Yahoo. Out / Doubtful / IR players are left out of lineups.",
+            "Yahoo %": "Share of Yahoo leagues rostering the player.",
+        }
+        view, cfg = tidy(pool, names, one=("Combined", "Yours", "Sleeper", "Model"), two=("Pts/$1K",), money=("Salary",),
+                         ints=("Yahoo %",), helps=helps)
         view.insert(1, "Lock", view.dk_id.isin(ss.get("locks", [])))
         view.insert(2, "Exclude", view.dk_id.isin(ss.get("excludes", [])))
-        f1, f2 = st.columns([1, 3])
-        posf = f1.multiselect("Positions", ["QB", "RB", "WR", "TE", "DST"], [])
+        f1, f2, f3 = st.columns([2, 3, 2])
+        posf = f1.multiselect("Positions", ["QB", "RB", "WR", "TE", "DST"], [], placeholder="All positions")
+        teamf = f2.multiselect("Teams", sorted(view.Team.unique()), [], placeholder="All teams")
+        q = f3.text_input("Find player", "", placeholder="Name…")
         if posf:
             view = view[view.Pos.isin(posf)]
-        f2.caption("Blank projection = no source covered that player; they're left out of lineups. "
-                   "Yours / Sleeper / Model are the individual sources behind **Proj**.")
+        if teamf:
+            view = view[view.Team.isin(teamf)]
+        if q.strip():
+            view = view[view.Player.str.contains(q.strip(), case=False, regex=False)]
+        st.caption("**Combined** is the number lineups use; Yours / Sleeper / Model are the sources behind it "
+                   "(hover a column name for details). Blank = no source covered that player, so they're left out.")
+        cfg["Injury"] = st.column_config.Column("Injury", help=helps["Injury"], width="medium")
         cfg["dk_id"] = None  # hidden; kept for locks/excludes
-        ed = st.data_editor(view.sort_values("Proj", ascending=False), hide_index=True, width="stretch", height=420,
+        cfg["Lock"] = st.column_config.CheckboxColumn("Lock", help="Force into every lineup")
+        cfg["Exclude"] = st.column_config.CheckboxColumn("Exclude", help="Keep out of every lineup")
+        ed = st.data_editor(view.sort_values("Combined", ascending=False), hide_index=True, width="stretch", height=420,
                             column_config=cfg, disabled=[c for c in view.columns if c not in ("Lock", "Exclude")])
         ss["locks"] = ed[ed.Lock].dk_id.tolist() + [l for l in ss.get("locks", []) if l not in set(view.dk_id)]
         ss["excludes"] = ed[ed.Exclude].dk_id.tolist() + [l for l in ss.get("excludes", []) if l not in set(view.dk_id)]
 
-        st.subheader("3 · Build lineups")
+        st.subheader("Build lineups")
         c = st.columns(7)
         o = optimizer.OptSettings(
             n_lineups=c[0].number_input("Lineups", 1, 150, S.n_lineups),
             min_salary=c[1].number_input("Min salary", 40000, 50000, S.min_salary, 100),
-            max_exposure=c[2].slider("Max exposure", 0.1, 1.0, S.max_exposure, 0.05),
-            min_unique=c[3].number_input("Min changes", 1, 6, S.min_unique),
-            stack_min=c[4].number_input("QB stack", 0, 3, S.stack_min),
-            bring_back=c[5].number_input("Bring-back", 0, 2, S.bring_back),
-            randomness=c[6].slider("Randomness", 0.0, 0.4, S.randomness, 0.02),
+            max_exposure=c[2].slider("Max exposure", 0.1, 1.0, S.max_exposure, 0.05,
+                                     help="Most lineups any one player can appear in (share of the set)."),
+            min_unique=c[3].number_input("Min changes", 1, 6, S.min_unique, help="Players each lineup must differ by."),
+            stack_min=c[4].number_input("QB stack", 0, 3, S.stack_min, help="Pass-catchers from the QB's team."),
+            bring_back=c[5].number_input("Bring-back", 0, 2, S.bring_back, help="Players from the QB's opponent."),
+            randomness=c[6].slider("Randomness", 0.0, 0.4, S.randomness, 0.02,
+                                   help="Projection noise per lineup, for variety."),
             locks=ss.get("locks", []), excludes=ss.get("excludes", []))
-        name = st.text_input("Name for this set", f"{r.season}_wk{r.week}" if r.week else "lineups")
-        if st.button("⚙ Build, save & export", type="primary"):
+        b1, b2, b3, b4 = st.columns([3, 1.3, 1.3, 4], vertical_alignment="bottom")
+        name = b1.text_input("Name for this set", f"{r.season}_wk{r.week}" if r.week else "lineups")
+        if b2.button("⚙ Build lineups", type="primary", width="stretch"):
             with st.spinner("Optimizing…"):
                 try:
-                    ss["lineups"] = pipeline.build_lineups(r, o, name=name)
+                    ss["lineups"], ss["saved_info"] = pipeline.build_lineups(r, o, name=name), None
                 except Exception as e:  # noqa: BLE001
                     st.error(f"Lineup build failed: {e}")
         out = ss.get("lineups")
+        can_save = bool(out and out["result"].lineups) and not ss.get("saved_info")
+        if b3.button("💾 Save", width="stretch", disabled=not can_save,
+                     help="Save this set (and write both CSVs to your BeatNFL/exports folder). Identical sets aren't saved twice."):
+            try:
+                ss["saved_info"] = pipeline.save_lineups(r, out, name)
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Save failed: {e}")
+        with b4:
+            if out:
+                res = out["result"]
+                msg = f"Built **{len(res.lineups)}** of {res.requested} · {res.status} · {res.elapsed}s"
+                si = ss.get("saved_info")
+                if si and si.get("set_id"):
+                    msg += (f" · already saved as set #{si['set_id']}" if si["duplicate"] else f" · saved as set #{si['set_id']}")
+                elif res.lineups:
+                    msg += " · not saved yet"
+                (st.success if res.status == "complete" else st.warning if res.lineups else st.error)(msg)
         if out:
             res = out["result"]
-            msg = f"Requested **{res.requested}** · generated **{len(res.lineups)}** · {res.status} · {res.elapsed}s"
-            (st.success if res.status == "complete" else st.warning if res.lineups else st.error)(msg)
             for d in res.diagnostics:
                 st.write("•", d)
             if res.lineups:
-                if out["set_id"]:
-                    st.info(f"Saved as set #{out['set_id']} — reopen any time under *Saved lineups*. "
-                            "Copies of both files are also in your BeatNFL/exports folder.")
-                st.dataframe(export.lineup_table(res.lineups, r.pool), hide_index=True, width="stretch", column_config={"Salary": st.column_config.NumberColumn("Salary", format="$%d")})
-                d1, d2 = st.columns(2)
-                for f, col, lab in zip(out["files"], (d1, d2), ("⬇ DraftKings upload CSV", "⬇ Readable lineups CSV")):
-                    col.download_button(lab, Path(f).read_bytes(), file_name=Path(f).name, mime="text/csv")
+                st.dataframe(export.lineup_table(res.lineups, r.pool), hide_index=True, width="stretch", column_config={
+                    "Rank": st.column_config.NumberColumn("Rank", help="1 = highest Combined projection. Lineups are listed best-first."),
+                    "Proj": st.column_config.NumberColumn("Proj", format="%.1f", help="Sum of the nine players' Combined projections."),
+                    "Salary": st.column_config.NumberColumn("Salary", format="$%d")})
+                d1, d2, _ = st.columns([1, 1, 2])
+                try:
+                    d1.download_button("⬇ DraftKings upload CSV", export.dk_csv_text(res.lineups, r.pool),
+                                       file_name=f"DK_upload_{name}.csv", mime="text/csv", width="stretch", key="dl_week_dk")
+                except ValueError as e:
+                    d1.error(str(e))
+                d2.download_button("⬇ Readable lineups CSV", export.readable_text(res.lineups, r.pool),
+                                   file_name=f"Lineups_{name}.csv", mime="text/csv", width="stretch", key="dl_week_rd")
                 with st.expander("Exposure"):
                     st.dataframe(export.exposure(res.lineups, r.pool), hide_index=True)
 
@@ -254,40 +348,343 @@ with tab_week:
 with tab_saved:
     sets = storage.list_lineup_sets()
     if sets.empty:
-        st.info("No saved lineup sets yet.")
+        st.info("No saved lineup sets yet. Build lineups on *This week* and click **💾 Save**.")
     else:
+        dups = storage.duplicate_sets()
         sv = sets.copy()
         sv["Created"] = pd.to_datetime(sv.created_utc, utc=True).dt.tz_convert("America/New_York").dt.strftime("%a %b %-d, %-I:%M %p")
-        st.dataframe(sv.rename(columns={"id": "#", "name": "Name", "n": "Lineups", "slate": "Slate", "status": "Result"})[
-            ["#", "Name", "Created", "Lineups", "Slate", "Result"]], hide_index=True, width="stretch")
-        sid = st.selectbox("Open set", sets.id.tolist(), format_func=lambda i: f"#{i} · {sets.set_index('id').at[i, 'name']}")
-        d = storage.load_lineup_set(int(sid))
-        _, pool = storage.get_projection_run(d["projection_run_id"])
-        bad = [i + 1 for i, lu in enumerate(d["lineups"]) if optimizer.validate(lu, pool)]
-        st.caption(f"{len(d['lineups'])} lineups · created "
-                   f"{pd.Timestamp(d['created_utc']).tz_convert('America/New_York'):%a %b %-d, %-I:%M %p} · "
-                   + ("all valid against the saved slate" if not bad else f"invalid: {bad}"))
-        st.dataframe(export.lineup_table(d["lineups"], pool), hide_index=True, width="stretch", column_config={"Salary": st.column_config.NumberColumn("Salary", format="$%d")})
-        c1, c2, c3 = st.columns(3)
-        try:
-            c1.download_button("⬇ DraftKings upload CSV", export.dk_csv_text(d["lineups"], pool),
-                               file_name=f"DK_upload_{d['name']}.csv", mime="text/csv")
-        except ValueError as e:
-            c1.error(str(e))
-        new = c2.text_input("Rename", d["name"])
-        if c2.button("Rename") and new != d["name"]:
+        sv["Week"] = [f"{int(s_)} wk {int(w_)}" if pd.notna(s_) and pd.notna(w_) else "" for s_, w_ in zip(sv.season, sv.week)]
+        sv["Duplicate of"] = sv.id.map(lambda i: f"#{dups[i]}" if i in dups else "")
+        sv.insert(0, "Select", False)
+        sv = sv.rename(columns={"id": "Set", "name": "Name", "n": "Lineups"})
+        cols = ["Select", "Set", "Name", "Created", "Week", "Lineups", "Duplicate of"]
+        if not dups:
+            cols.remove("Duplicate of")
+        st.caption("Tick sets to delete them. Click a name to rename it.")
+        ed = st.data_editor(sv[cols], hide_index=True, width="stretch", key=f"sets_editor_{ss.get('sets_ver', 0)}",
+                            disabled=[c for c in cols if c not in ("Select", "Name")],
+                            column_config={"Select": st.column_config.CheckboxColumn("Select", width="small"),
+                                           "Set": st.column_config.NumberColumn("Set", format="#%d", width="small")})
+        renamed = [(int(i), n) for i, n, o_ in zip(ed.Set, ed.Name, sv.Name) if str(n).strip() and n != o_]
+        for i, n in renamed:
             try:
-                storage.rename_lineup_set(int(sid), new, d["revision"])
-                st.rerun()
+                storage.rename_lineup_set(i, str(n).strip(), int(sets.set_index("id").at[i, "revision"]))
             except RuntimeError as e:
                 st.error(str(e))
-        if c3.button("Delete set"):
-            ss["confirm_del"] = int(sid)
-        if ss.get("confirm_del") == int(sid):
-            if c3.button("Confirm delete — can't be undone"):
-                storage.delete_lineup_set(int(sid))
+        if renamed:
+            ss["sets_ver"] = ss.get("sets_ver", 0) + 1
+            st.rerun()
+        chosen = [int(i) for i in ed[ed.Select].Set]
+        a1, a2, a3 = st.columns([1.4, 1.6, 3])
+        if a1.button(f"🗑 Delete selected ({len(chosen)})", disabled=not chosen, width="stretch"):
+            ss["confirm_del"] = chosen
+        if dups and a2.button(f"🧹 Remove {len(dups)} duplicate set(s)", width="stretch",
+                              help="Deletes sets whose lineups are identical to an older saved set; the oldest copy is kept."):
+            ss["confirm_del"] = sorted(dups)
+        if ss.get("confirm_del"):
+            ids = ss["confirm_del"]
+            a3.warning(f"Delete {len(ids)} set(s): " + ", ".join(f"#{i}" for i in ids) + "? This can't be undone.")
+            k1, k2, _ = st.columns([1.4, 1, 3.6])
+            if k1.button("Yes, delete", type="primary", width="stretch"):
+                for i in ids:
+                    storage.delete_lineup_set(int(i))
+                ss.pop("confirm_del")
+                ss["sets_ver"] = ss.get("sets_ver", 0) + 1
+                st.rerun()
+            if k2.button("Cancel", width="stretch"):
                 ss.pop("confirm_del")
                 st.rerun()
+
+        st.divider()
+        ids = sets.id.tolist()
+        o1, o2 = st.columns([2, 3])
+        sid = o1.selectbox("Open set", ids, format_func=lambda i: f"#{i} · {sets.set_index('id').at[i, 'name']}")
+        d = storage.load_lineup_set(int(sid))
+        _, pool = storage.get_projection_run(d["projection_run_id"])
+        idxp = pool.set_index("dk_id")
+        players = sorted({idxp.at[x, "name"] for lu in d["lineups"] for x in lu if x in idxp.index})
+        has = o2.multiselect("Only lineups with", players, placeholder="Any player")
+        bad = [i + 1 for i, lu in enumerate(d["lineups"]) if optimizer.validate(lu, pool)]
+        order = sorted(range(len(d["lineups"])), key=lambda i: -float(idxp.loc[d["lineups"][i]].proj.sum()))
+        lus = [d["lineups"][i] for i in order]
+        tbl = export.lineup_table(lus, pool)
+        if has:
+            keep = [all(any(idxp.at[x, "name"] == p for x in lu) for p in has) for lu in lus]
+            tbl = tbl[keep]
+        st.caption(f"{len(d['lineups'])} lineups · created "
+                   f"{pd.Timestamp(d['created_utc']).tz_convert('America/New_York'):%a %b %-d, %-I:%M %p} · "
+                   + ("all valid against the saved slate" if not bad else f"invalid: {bad}")
+                   + (f" · showing {len(tbl)} with {', '.join(has)}" if has else ""))
+        st.dataframe(tbl, hide_index=True, width="stretch", column_config={
+            "Rank": st.column_config.NumberColumn("Rank", help="1 = highest projection when saved."),
+            "Proj": st.column_config.NumberColumn("Proj", format="%.1f"),
+            "Salary": st.column_config.NumberColumn("Salary", format="$%d")})
+        e1, e2, _ = st.columns([1, 1, 2])
+        try:
+            e1.download_button("⬇ DraftKings upload CSV", export.dk_csv_text(lus, pool),
+                               file_name=f"DK_upload_{d['name']}.csv", mime="text/csv", width="stretch", key="dl_saved_dk")
+        except ValueError as e:
+            e1.error(str(e))
+        e2.download_button("⬇ Readable lineups CSV", export.readable_text(lus, pool),
+                           file_name=f"Lineups_{d['name']}.csv", mime="text/csv", width="stretch", key="dl_saved_rd")
+
+
+# ------------------------------------------------------------------ shared: betting lines
+def raw_lines():
+    """Odds API game lines (cached on disk for an hour), or None without a key."""
+    if not S.odds_api_key:
+        return None
+    try:
+        from beatnfl.sources import odds
+        return odds.game_lines(S.odds_api_key, offline=offline)
+    except StepError as e:
+        st.warning(e.as_text())
+        return None
+
+
+def consensus_lines(raw):
+    if raw is None or raw.empty:
+        return None
+    from beatnfl.sources import odds
+    return odds.consensus(raw)
+
+
+# ------------------------------------------------------------------ GAMES
+with tab_games:
+    st.caption("Information only. The game model has **not** beaten closing lines historically — see Evidence. "
+               "Treat model numbers as a second opinion, not a pick.")
+    season, week = week_picker("g")
+    raw = raw_lines()
+    from beatnfl import research
+    try:
+        gt = research.games_table(season, week, raw, offline=offline)
+        if gt.empty:
+            st.info(f"No games found for {season} week {week}.")
+        else:
+            src = "Odds API — median of all books" if (gt._src == "odds_api").any() else \
+                "nflverse schedule (add an Odds API key in Settings for live lines from every book)"
+            st.subheader("Lines")
+            show(gt.drop(columns="_src"), {
+                "Spread": st.column_config.Column("Spread", help="Both teams' point spreads. Minus = favourite."),
+                "Moneyline": st.column_config.Column("Moneyline", help="Odds to win outright (American odds)."),
+                "Total": st.column_config.NumberColumn("Total", format="%.1f", help="Combined points over/under line."),
+                "Model spread": st.column_config.Column("Model spread", help="BeatNFL's game model alone (team ratings from results this season and last)."),
+                "Model total": st.column_config.NumberColumn("Model total", format="%.1f")}, height=38 + 35 * len(gt))
+            st.caption(f"Lines from: {src}.")
+
+            st.subheader("Chances: market vs model")
+            gp = research.game_probs(season, week, raw, offline=offline)
+            f1, f2, f3 = st.columns(3)
+            pg = f1.selectbox("Game", ["All games"] + list(gt.Game), key="games_game")
+            pt = f2.selectbox("Bet type", ["All", "Spread", "Moneyline", "Total"], key="games_type")
+            pshow = f3.selectbox("Show", ["Every side", "Only where model is higher than market"], key="games_show")
+            v = gp
+            if pg != "All games":
+                v = v[v.Game == pg]
+            if pt != "All":
+                v = v[v["Bet type"] == pt]
+            if pshow.startswith("Only"):
+                v = v[v.Difference > 0].sort_values("Difference", ascending=False)
+            if v.empty:
+                st.info("Nothing matches these filters.")
+            else:
+                show(v, {
+                    "Odds": st.column_config.NumberColumn("Odds", format="%+d", help="Median American odds across books."),
+                    "Market %": st.column_config.NumberColumn("Market %", format="%.1f%%",
+                                                              help="The sportsbooks' chance for this side with their margin removed."),
+                    "Model %": st.column_config.NumberColumn("Model %", format="%.1f%%",
+                                                             help="Market chance moved by how far BeatNFL's game model sits from the line "
+                                                                  "(model weighted 25%, market 75%, because the model alone hasn't beaten closing lines)."),
+                    "Difference": st.column_config.NumberColumn("Difference", format="%+.1f",
+                                                                help="Model % − Market %, in percentage points. Click a column header to sort.")},
+                     height=min(700, 38 + 35 * len(v)))
+                st.caption("Spread, moneyline and total each have their own chance. Differences of a couple of points "
+                           "are within normal noise. Click any column header to sort.")
+    except StepError as e:
+        st.error(e.as_text())
+
+    st.subheader("Matchups")
+    st.caption("Team efficiency from free NFL play-by-play: offense vs the opponent's defense, recent games weighted "
+               "more. Pass/Run edge = offense EPA per play + opponent's EPA allowed (higher favors the offense). "
+               "Tested as model inputs, these didn't improve forecasts beyond what betting lines already carry (see "
+               "Evidence), so they're shown for reading, not fed into projections.")
+    if st.button("Load matchups"):
+        with st.spinner("Reading play-by-play (first time downloads ~20 MB per season)…"):
+            try:
+                ss["mu"] = research.matchups(season, week, offline=offline)
+            except StepError as e:
+                st.error(e.as_text())
+    if ss.get("mu") is not None:
+        mu = ss["mu"].sort_values("Pass edge", ascending=False).copy()
+        mu["Success rate"] = mu["Success rate"] * 100
+        cfgm = {c: st.column_config.NumberColumn(c, format="%.2f") for c in ("Off EPA/play", "Opp def EPA allowed", "Pass edge", "Run edge")}
+        cfgm.update({c: st.column_config.NumberColumn(c, format="%.0f") for c in
+                     ("Success rate", "Explosive %", "Pass rate over exp. %", "Red zone TD %", "Sack rate %", "Opp sack rate %", "Plays/game")})
+        cfgm["Success rate"] = st.column_config.NumberColumn("Success %", format="%.0f")
+        st.dataframe(mu, hide_index=True, width="stretch", column_config=cfgm)
+
+# ------------------------------------------------------------------ PROPS
+with tab_props:
+    st.caption("Information only — player forecasts and how they compare with sportsbook prop lines.")
+    season, week = week_picker("p")
+    lines = consensus_lines(raw_lines())
+    st.subheader("Player forecasts")
+    if st.button("Forecast every player this week"):
+        with st.spinner("Forecasting…"):
+            try:
+                from beatnfl.models import train
+                from beatnfl.sources import sleeper
+                pm, dm, meta = train.get_models(offline=offline)
+                try:
+                    spp, _ = sleeper.players(offline=offline)
+                except StepError:
+                    spp = None
+                fc, warns = train.forecast_week(season, week, spp, pm, lines, offline=offline)
+                from beatnfl.sources import yahoo as _y
+                if S.yahoo_client_id and S.yahoo_client_secret and _y.connected() and not offline:
+                    try:
+                        lk = _y.first_league(S.yahoo_client_id, S.yahoo_client_secret)
+                        yp = pd.DataFrame(_y.league_players(lk, S.yahoo_client_id, S.yahoo_client_secret))
+                        from beatnfl.names import norm_name
+                        yp["nn"] = yp.name.map(norm_name)
+                        fc["nn"] = fc.name.map(norm_name)
+                        fc = fc.merge(yp[["nn", "team", "pct_rostered", "pct_change", "status_raw"]].drop_duplicates(["nn", "team"]),
+                                      on=["nn", "team"], how="left").rename(columns={
+                            "pct_rostered": "yahoo_pct_rostered", "pct_change": "yahoo_pct_change", "status_raw": "yahoo_status"})
+                    except StepError as e:
+                        st.warning("Yahoo data skipped: " + e.what)
+                ss["fc"], ss["pm"], ss["fc_week"] = fc, pm, (season, week)
+                for w in warns:
+                    st.warning(w)
+            except StepError as e:
+                st.error(e.as_text())
+    fc = ss.get("fc")
+    if fc is None:
+        st.caption("Click the button to forecast every player in this week's games.")
+    else:
+        names = {"name": "Player", "position": "Pos", "team": "Team", "opp": "Opp", "injury": "Status",
+                 "p_dk_pts": "DK pts", "p_pass_yds": "Pass yds", "p_pass_att": "Pass att", "p_rush_yds": "Rush yds",
+                 "p_rush_att": "Rush att", "p_rec": "Rec", "p_rec_yds": "Rec yds", "p_any_td": "TD chance"}
+        if "yahoo_pct_rostered" in fc and fc.yahoo_pct_rostered.notna().any():
+            names.update({"yahoo_status": "Yahoo status", "yahoo_pct_rostered": "Yahoo %", "yahoo_pct_change": "Yahoo % chg"})
+        fv, fcfg = tidy(fc.sort_values("p_dk_pts", ascending=False), names, one=("DK pts", "Rec", "Yahoo % chg"),
+                        ints=("Pass yds", "Pass att", "Rush yds", "Rush att", "Rec yds", "Yahoo %"), pct=("TD chance",))
+        g1, g2, g3 = st.columns([2, 3, 2])
+        fpos = g1.multiselect("Positions", sorted(fv.Pos.unique()), [], placeholder="All positions", key="fc_pos")
+        fteam = g2.multiselect("Teams", sorted(fv.Team.unique()), [], placeholder="All teams", key="fc_team")
+        fq = g3.text_input("Find player", "", placeholder="Name…", key="fc_q")
+        if fpos:
+            fv = fv[fv.Pos.isin(fpos)]
+        if fteam:
+            fv = fv[fv.Team.isin(fteam)]
+        if fq.strip():
+            fv = fv[fv.Player.str.contains(fq.strip(), case=False, regex=False)]
+        fv = fv[[c for c in fv.columns if not (pd.api.types.is_numeric_dtype(fv[c]) and fv[c].isna().all())]]
+        show(fv, {k: v for k, v in fcfg.items() if k in fv.columns}, height=420)
+        st.caption("Blank (None) = that stat isn't forecast for the player's position. Pick a position to see just its stats. "
+                   "Click a column header to sort.")
+
+    st.subheader("Props")
+    if not S.odds_api_key:
+        st.warning("**Props need a free Odds API key** — that's where the sportsbook lines come from.\n\n"
+                   "1. Sign up at [the-odds-api.com](https://the-odds-api.com/) (free plan, key arrives by email).\n"
+                   "2. Paste it into **Settings** in the sidebar and click **Save settings**.\n\n"
+                   "Forecasts above and lineups work without it.")
+    else:
+        from beatnfl import research
+        from beatnfl.sources import odds as _odds
+        mk = st.multiselect("Prop markets", list(_odds.PROP_MARKETS), research.CORE_PROP_MARKETS,
+                            format_func=lambda m: research.STAT_NAMES.get(_odds.PROP_MARKETS.get(m, m), m))
+        n_games = int(fc.game_id.nunique()) if fc is not None and "game_id" in fc else 14
+        st.caption(f"Each load costs about {len(mk) * n_games} Odds API credits ({len(mk)} markets × {n_games} games). "
+                   "Free plan = 500/month, so about one full load per week. Books post most player props "
+                   "2–4 days before kickoff — loading earlier returns little or nothing.")
+        if st.button("Load props"):
+            with st.spinner("Pulling props…"):
+                try:
+                    if ss.get("fc") is None or ss.get("fc_week") != (season, week):
+                        from beatnfl.models import train
+                        pm, dm, meta = train.get_models(offline=offline)
+                        ss["fc"], _ = train.forecast_week(season, week, None, pm, lines, offline=offline)
+                        ss["pm"], ss["fc_week"] = pm, (season, week)
+                    board, info = research.props_board(S.odds_api_key, season, week, ss["fc"], ss["pm"], mk,
+                                                       offline=offline)
+                    ss["board"] = board
+                    st.success(f"{len(board)} prop lines from {info['games']} games.")
+                except StepError as e:
+                    ss["board"] = None
+                    st.error(e.as_text())
+        b = ss.get("board")
+        if b is not None and not b.empty:
+            c1, c2, c3, c4 = st.columns(4)
+            games = ["All games"] + sorted(b.game.unique())
+            pick_g = c1.selectbox("Game", games, key="props_game")
+            books = [research.CONSENSUS] + sorted({research.book_name(x) for x in b.book.unique()})
+            pick_b = c2.selectbox("Sportsbook", books, key="props_book")
+            pick_s = c3.selectbox("Sort by", ["Biggest difference", "Sportsbook", "Player"], key="props_sort")
+            pick_f = c4.selectbox("Show", ["Every prop", "Only where model is higher (Over / Yes)",
+                                           "Only where model disagrees (4+ pts)"], key="props_show")
+            view = research.props_view(b, pick_g, pick_b, pick_s)
+            if not view.empty:
+                if pick_f.startswith("Only where model is higher"):
+                    view = view[view.Difference > 0]
+                elif pick_f.startswith("Only where model disagrees"):
+                    view = view[view.Lean.str.contains("Over|Under|Yes")]
+            if view.empty:
+                st.info("No props match these filters.")
+            else:
+                show(view, {
+                    "Odds": st.column_config.NumberColumn("Odds", format="%+d"),
+                    "Model median": st.column_config.NumberColumn("Model median", format="%.1f",
+                                                                  help="The model's most likely result, corrected for how its past forecasts missed."),
+                    "Model %": st.column_config.NumberColumn("Model %", format="%.0f%%", help="Model's chance of the Over (or Yes)."),
+                    "Book %": st.column_config.NumberColumn("Book %", format="%.0f%%", help="The book's chance of the Over (or Yes) with its margin removed."),
+                    "Difference": st.column_config.NumberColumn("Difference", format="%+.1f", help="Model % − Book %, in percentage points."),
+                    "Lean": st.column_config.Column("Lean", help="Model differs by 4+ points (★ = 8+).")},
+                     height=min(700, 38 + 35 * len(view)))
+            st.caption("\\* Anytime TD is quoted on one side only, so its Book % still includes the margin and runs high. "
+                       "**no forecast** = player ruled out or too little history. Click any column header to sort. "
+                       "Information only.")
+
+# ------------------------------------------------------------------ LOAD DATA
+with tab_load:
+    st.markdown("Choose where this week's data comes from, then click **⟳ Refresh** (top right).")
+    st.radio("Slate source", ["Automatic (DraftKings)", "Upload DKSalaries.csv"], horizontal=True, key="slate_mode")
+    if not str(ss.get("slate_mode", "Automatic")).startswith("Upload"):
+        from beatnfl.sources import dk
+        if "slates" not in ss and not offline:
+            try:
+                ss["slates"], ss["slates_err"] = dk.discover(offline=offline), None
+            except StepError as e:
+                ss["slates"], ss["slates_err"] = [], e.as_text()
+        if ss.get("slates"):
+            main = dk.pick_main_slate(ss["slates"])
+            labels = [s_.label for s_ in ss["slates"]]
+            if ss.get("slate_pick") not in labels:
+                ss["slate_pick"] = main.label
+            st.selectbox("Slate", labels, key="slate_pick",
+                         help="All NFL Classic slates DraftKings has open. The main slate is picked by default.")
+        else:
+            if ss.get("slates_err"):
+                st.warning("Couldn't list DraftKings slates right now — the main slate will still be tried on Refresh, "
+                           "then the newest DKSalaries*.csv in your inbox.\n\n" + ss["slates_err"])
+            if st.button("Retry DraftKings slate list"):
+                ss.pop("slates", None)
+                st.rerun()
+        st.caption("If DraftKings blocks the download, the newest DKSalaries*.csv in the inbox is used automatically.")
+    else:
+        st.file_uploader("DKSalaries.csv (DraftKings → NFL Classic contest → Export to CSV)", type="csv", key="up_file")
+    st.file_uploader("Your projections CSV (optional — newest file in the inbox is used otherwise)", type="csv", key="paid_file")
+    st.text_area("…or paste a projections table (e.g. copy FantasyPros' table in your browser, paste here)",
+                 height=90, key="pasted_proj")
+    st.checkbox("Include in-house model", value=True, key="use_model")
+    r = ss.get("run")
+    st.subheader("Last refresh")
+    if r:
+        show_steps(r.steps)
+    else:
+        st.caption("Nothing loaded yet.")
+
 
 # ------------------------------------------------------------------ MY YAHOO TEAM
 with tab_yahoo:
@@ -366,7 +763,7 @@ with tab_yahoo:
                                           "p_pass_yds": "Pass yds", "p_rush_yds": "Rush yds", "p_rec": "Rec",
                                           "p_rec_yds": "Rec yds", "p_any_td": "TD chance"},
                                      one=("Proj pts", "Rec"), ints=("Pass yds", "Rush yds", "Rec yds"), pct=("TD chance",))
-                    show(ytbl)
+                    show(ytbl, cfg)
                     model_slots = [(s_, n) for s_, n in slots if s_ not in ("K", "DEF")]
                     sug = yahoo.suggest(rows, model_slots)
                     cur = {r["player_key"] for r in rows if r["slot"] not in ("BN", "IR", "IR+", "NA", "K", "DEF")}
@@ -374,7 +771,7 @@ with tab_yahoo:
                     st.markdown("**Suggested starters** (kickers and defenses not projected — keep your choice)")
                     sg, sgc = tidy(pd.DataFrame(sug), {"slot": "Slot", "player": "Start", "proj": "Proj pts"}, one=("Proj pts",))
                     sg["Start"] = sg["Start"].replace({"— nobody projected —": "— no healthy, projected player —"})
-                    show(sg)
+                    show(sg, sgc)
                     ins = [r for r in rows if r["player_key"] in best - cur]
                     outs = [r for r in rows if r["player_key"] in cur - best]
                     if ins or outs:
@@ -398,162 +795,6 @@ with tab_yahoo:
         except StepError as e:
             st.error(e.as_text())
 
-# ------------------------------------------------------------------ RESEARCH
-with tab_research:
-    st.caption("Information only. The game model has **not** beaten closing lines historically — see Evidence. "
-               "Treat model numbers as a second opinion, not a pick.")
-    from beatnfl.sources import nflverse as nv
-    try:
-        sched = nv.schedules(offline=offline)
-        default = nv.upcoming_week(sched)
-    except StepError as e:
-        st.error(e.as_text())
-        default = (nv.current_season(), 1)
-    c1, c2 = st.columns(2)
-    season = c1.number_input("Season", 2015, 2035, default[0])
-    week = c2.number_input("Week", 1, 18, default[1])
-    lines = None
-    if S.odds_api_key:
-        try:
-            from beatnfl.sources import odds
-            lines = odds.consensus(odds.game_lines(S.odds_api_key, offline=offline))
-        except StepError as e:
-            st.warning(e.as_text())
-    st.subheader("Games")
-    try:
-        from beatnfl import research
-        gt = research.games_table(int(season), int(week), lines, offline=offline)
-        def _fav(game, m):
-            if pd.isna(m):
-                return ""
-            away, home = game.split(" @ ")
-            return f"{home if m > 0 else away} -{abs(m):.1f}" if abs(m) >= 0.05 else "Pick'em"
-        gt["Model spread"] = [_fav(g, m) for g, m in zip(gt.Game, gt["Model margin (home)"])]
-        gv, gc = tidy(gt, {"Game": "Game", "Market": "Spread", "Model spread": "Model spread", "Market total": "Total",
-                           "Model total": "Model total", "P(home covers)": "Home covers %", "Lines from": "Lines from"},
-                      one=("Total", "Model total"), pct=("Home covers %",))
-        show(gv)
-        st.caption("Model spread/total = the game model alone. Home covers % blends the model with the market, "
-                   "weighted 75% to the market.")
-    except StepError as e:
-        st.error(e.as_text())
-
-    st.subheader("Matchups")
-    st.caption("Team efficiency from free NFL play-by-play: offense vs the opponent's defense, recent games weighted "
-               "more. Pass/Run edge = offense EPA per play + opponent's EPA allowed (higher favors the offense). "
-               "Tested as model inputs, these didn't improve forecasts beyond what betting lines already carry (see "
-               "Evidence), so they're shown for reading, not fed into projections.")
-    if st.button("Load matchups"):
-        with st.spinner("Reading play-by-play (first time downloads ~20 MB per season)…"):
-            try:
-                from beatnfl import research as _r
-                ss["mu"] = _r.matchups(int(season), int(week), offline=offline)
-            except StepError as e:
-                st.error(e.as_text())
-    if ss.get("mu") is not None:
-        mu = ss["mu"].sort_values("Pass edge", ascending=False).copy()
-        mu["Success rate"] = mu["Success rate"] * 100
-        cfgm = {c: st.column_config.NumberColumn(c, format="%.2f") for c in ("Off EPA/play", "Opp def EPA allowed", "Pass edge", "Run edge")}
-        cfgm.update({c: st.column_config.NumberColumn(c, format="%.0f") for c in
-                     ("Success rate", "Explosive %", "Pass rate over exp. %", "Red zone TD %", "Sack rate %", "Opp sack rate %", "Plays/game")})
-        cfgm["Success rate"] = st.column_config.NumberColumn("Success %", format="%.0f")
-        st.dataframe(mu, hide_index=True, width="stretch", column_config=cfgm)
-
-    st.subheader("Player forecasts & props")
-    if st.button("Forecast every player this week"):
-        with st.spinner("Forecasting…"):
-            try:
-                from beatnfl.models import train
-                from beatnfl.sources import sleeper
-                pm, dm, meta = train.get_models(offline=offline)
-                try:
-                    spp, _ = sleeper.players(offline=offline)
-                except StepError:
-                    spp = None
-                fc, warns = train.forecast_week(int(season), int(week), spp, pm, lines, offline=offline)
-                from beatnfl.sources import yahoo as _y
-                if S.yahoo_client_id and S.yahoo_client_secret and _y.connected() and not offline:
-                    try:
-                        lk = _y.first_league(S.yahoo_client_id, S.yahoo_client_secret)
-                        yp = pd.DataFrame(_y.league_players(lk, S.yahoo_client_id, S.yahoo_client_secret))
-                        from beatnfl.names import norm_name
-                        yp["nn"] = yp.name.map(norm_name)
-                        fc["nn"] = fc.name.map(norm_name)
-                        fc = fc.merge(yp[["nn", "team", "pct_rostered", "pct_change", "status_raw"]].drop_duplicates(["nn", "team"]),
-                                      on=["nn", "team"], how="left").rename(columns={
-                            "pct_rostered": "yahoo_pct_rostered", "pct_change": "yahoo_pct_change", "status_raw": "yahoo_status"})
-                    except StepError as e:
-                        st.warning("Yahoo data skipped: " + e.what)
-                ss["fc"], ss["pm"], ss["fc_week"] = fc, pm, (int(season), int(week))
-                for w in warns:
-                    st.warning(w)
-            except StepError as e:
-                st.error(e.as_text())
-    fc = ss.get("fc")
-    if fc is None:
-        st.caption("Click the button to forecast every player in this week's games.")
-    else:
-        names = {"name": "Player", "position": "Pos", "team": "Team", "opp": "Opp", "injury": "Status",
-                 "p_dk_pts": "DK pts", "p_pass_yds": "Pass yds", "p_pass_att": "Pass att", "p_rush_yds": "Rush yds",
-                 "p_rush_att": "Rush att", "p_rec": "Rec", "p_rec_yds": "Rec yds", "p_any_td": "TD chance"}
-        if "yahoo_pct_rostered" in fc and fc.yahoo_pct_rostered.notna().any():
-            names.update({"yahoo_status": "Yahoo status", "yahoo_pct_rostered": "Yahoo %", "yahoo_pct_change": "Yahoo % chg"})
-        fv, fcfg = tidy(fc.sort_values("p_dk_pts", ascending=False), names, one=("DK pts", "Rec", "Yahoo % chg"),
-                        ints=("Pass yds", "Pass att", "Rush yds", "Rush att", "Rec yds", "Yahoo %"), pct=("TD chance",))
-        show(fv)
-
-    st.subheader("Props")
-    if not S.odds_api_key:
-        st.warning("**Props need a free Odds API key** — that's where the sportsbook lines come from.\n\n"
-                   "1. Sign up at [the-odds-api.com](https://the-odds-api.com/) (free plan, key arrives by email).\n"
-                   "2. Paste it into **Settings** in the sidebar and click **Save settings**.\n\n"
-                   "Forecasts above, lineups and the prop checker in the test page work without it.")
-    else:
-        from beatnfl import research
-        from beatnfl.sources import odds as _odds
-        mk = st.multiselect("Prop markets", list(_odds.PROP_MARKETS), research.CORE_PROP_MARKETS,
-                            format_func=lambda m: research.STAT_NAMES.get(_odds.PROP_MARKETS.get(m, m), m))
-        n_games = int(fc.game_id.nunique()) if fc is not None else 14
-        st.caption(f"Each load costs about {len(mk) * n_games} Odds API credits ({len(mk)} markets × {n_games} games). "
-                   "Free plan = 500/month, so about one full load per week. Books post most player props "
-                   "2–4 days before kickoff — loading earlier returns little or nothing.")
-        if st.button("Load props"):
-            with st.spinner("Pulling props…"):
-                try:
-                    if ss.get("fc") is None or ss.get("fc_week") != (int(season), int(week)):
-                        from beatnfl.models import train
-                        pm, dm, meta = train.get_models(offline=offline)
-                        ss["fc"], _ = train.forecast_week(int(season), int(week), None, pm, lines, offline=offline)
-                        ss["pm"], ss["fc_week"] = pm, (int(season), int(week))
-                    board, info = research.props_board(S.odds_api_key, int(season), int(week), ss["fc"], ss["pm"], mk,
-                                                       offline=offline)
-                    ss["board"] = board
-                    st.success(f"{len(board)} prop lines from {info['games']} games.")
-                except StepError as e:
-                    ss["board"] = None
-                    st.error(e.as_text())
-        b = ss.get("board")
-        if b is not None and not b.empty:
-            c1, c2, c3 = st.columns(3)
-            games = ["All games"] + sorted(b.game.unique())
-            pick_g = c1.selectbox("Game", games, key="props_game")
-            books = [research.CONSENSUS] + sorted({research.book_name(x) for x in b.book.unique()})
-            pick_b = c2.selectbox("Sportsbook", books, key="props_book")
-            pick_s = c3.selectbox("Sort by", ["Biggest difference", "Sportsbook", "Player"], key="props_sort")
-            only = st.toggle("Only show props where the model disagrees with the book", value=False, key="props_only")
-            view = research.props_view(b, pick_g, pick_b, pick_s)
-            if only and not view.empty:
-                view = view[view.Lean.str.contains("Over|Under|Yes")]
-            if view.empty:
-                st.info("No props match these filters.")
-            else:
-                st.dataframe(view, hide_index=True, width="stretch", height=min(700, 38 + 35 * len(view)))
-            st.caption("**Model median** = the model's most likely result, corrected for how its past forecasts missed. "
-                       "**Model %** = its chance of the Over (or Yes). **Book %** = the book's chance with its margin removed. "
-                       "\\* Anytime TD is quoted on one side only, so its Book % still includes the margin and runs high. "
-                       "**Lean** = model differs by 4+ points (★ = 8+). **no forecast** = player ruled out or too little history. "
-                       "Information only.")
-
 # ------------------------------------------------------------------ EVIDENCE
 with tab_evidence:
     from beatnfl.config import HOME as _H
@@ -572,58 +813,77 @@ with tab_evidence:
                    "is forecast by a model trained only on earlier seasons, using only games before each forecast.")
         st.markdown("**DK points — average miss per player-game (lower is better)**")
         pl = pd.DataFrame(ev["players"])
-        t, _ = tidy(pl[pl.season.astype(str) == "all"], {"pos": "Pos", "n": "Player-games", "mae_model": "Model",
+        t, tc = tidy(pl[pl.season.astype(str) == "all"], {"pos": "Pos", "n": "Player-games", "mae_model": "Model",
                     "mae_ewm": "Recent form", "mae_naive": "Season average", "bias_model": "Model bias"},
                     ints=("Player-games",), two=("Model", "Recent form", "Season average", "Model bias"))
-        show(t)
+        show(t, tc)
         st.markdown("**Decision test — each week's top-N picks by method, average actual DK points**")
-        t, _ = tidy(pd.DataFrame(ev["picks"]), {"pos": "Pos", "top_n": "Top N", "weeks": "Weeks", "avg_pts_model": "Model picks",
+        t, tc = tidy(pd.DataFrame(ev["picks"]), {"pos": "Pos", "top_n": "Top N", "weeks": "Weeks", "avg_pts_model": "Model picks",
                     "avg_pts_naive": "Season-avg picks", "avg_pts_ewm": "Recent-form picks", "avg_pts_oracle": "Perfect hindsight",
                     "model_beats_naive_weeks": "Model better in"},
                     ints=("Top N", "Weeks"), one=("Model picks", "Season-avg picks", "Recent-form picks", "Perfect hindsight"))
         t["Model better in"] = t["Model better in"].astype(str) + " of weeks"
-        show(t)
+        show(t, tc)
         st.markdown("**Prop stats** — lines in this test come from recent form, not sportsbooks; real lines are graded as you use Props")
         pr = pd.DataFrame(ev["props"])
         td = pr[pr.stat == "any_td"]
         pr = pr[pr.stat != "any_td"].assign(stat=lambda d: d.stat.map(lambda x: {"pass_yds": "Pass yds", "pass_att": "Pass att",
                  "pass_cmp": "Completions", "rush_yds": "Rush yds", "rush_att": "Rush att", "rec": "Receptions", "rec_yds": "Rec yds"}.get(x, x)))
-        t, _ = tidy(pr, {"stat": "Stat", "n": "Games", "mae_model": "Miss: model", "mae_baseline": "Miss: recent form",
+        t, tc = tidy(pr, {"stat": "Stat", "n": "Games", "mae_model": "Miss: model", "mae_baseline": "Miss: recent form",
                     "brier_model": "Prob. score: model", "brier_coinflip": "Prob. score: 50/50", "confident_hit_rate": "Confident calls right"},
                     ints=("Games",), two=("Miss: model", "Miss: recent form"), pct=("Confident calls right",))
-        t.attrs["fmts"].update({"Prob. score: model": "%.3f", "Prob. score: 50/50": "%.3f"})
-        show(t)
+        tc.update({c_: st.column_config.NumberColumn(c_, format="%.3f") for c_ in ("Prob. score: model", "Prob. score: 50/50")})
+        show(t, tc)
         if len(td):
             st.caption(f"Anytime TD probability score: model {td.brier_model.iloc[0]:.3f} vs recent-form {td.brier_baseline.iloc[0]:.3f} "
                        "(lower is better). Probability score = Brier score.")
         st.markdown("**Defenses (DST)**")
-        t, _ = tidy(pd.DataFrame(ev["dst"]), {"season": "Season", "n": "Games", "mae_model": "Miss: model", "mae_ewm": "Miss: recent form",
+        t, tc = tidy(pd.DataFrame(ev["dst"]), {"season": "Season", "n": "Games", "mae_model": "Miss: model", "mae_ewm": "Miss: recent form",
                     "rank_corr_model": "Ranking accuracy: model", "rank_corr_ewm": "Ranking accuracy: recent form"},
                     two=("Miss: model", "Miss: recent form", "Ranking accuracy: model", "Ranking accuracy: recent form"))
         t["Season"] = t["Season"].astype(str)
-        show(t)
+        show(t, tc)
         g = ev["games"]
         st.markdown(f"**Games vs closing line** — {g['n_games']:,} games, {g['seasons']}. Break-even at -110 odds is 52.4%.")
         c1, c2 = st.columns(2)
         for col, key, lab in ((c1, "ats", "Spread"), (c2, "totals", "Total")):
             t = pd.DataFrame(g[key]).assign(edge=lambda d: d.edge_pts.map(lambda x: f"{x}+ pts"))
-            t, _ = tidy(t, {"edge": f"{lab}: model differs by", "n": "Games", "win_rate": "Model side won"}, ints=("Games",),
+            t, tc = tidy(t, {"edge": f"{lab}: model differs by", "n": "Games", "win_rate": "Model side won"}, ints=("Games",),
                         pct=("Model side won",))
             with col:
-                show(t)
+                show(t, tc)
         st.caption(f"Average miss on the final margin: market {g['mae_margin']['spread_line']:.2f}, model "
                    f"{g['mae_margin']['model_spread']:.2f} points. On the total: market {g['mae_total']['total_line']:.2f}, "
                    f"model {g['mae_total']['model_total']:.2f}. The market is more accurate.")
+    st.markdown("**Sleeper vs in-house model**")
+    st.caption("Downloads Sleeper's own published projections for past weeks and scores them, the model, and every "
+               "blend of the two against what actually happened — so the Sleeper/Model weights come from evidence.")
+    if st.button("Test Sleeper vs model (≈5–10 min)"):
+        from beatnfl import backtest
+        with st.spinner("Downloading past Sleeper projections and testing…"):
+            try:
+                backtest.sleeper_compare(offline=offline, progress=lambda m: None)
+            except StepError as e:
+                st.error(e.as_text())
     sc = sorted(glob.glob(str(_H / "evidence" / "sleeper_compare_*.json")))
     if sc:
         c = json.loads(Path(sc[-1]).read_text())
         if c.get("n"):
-            st.markdown(f"**Sleeper vs in-house model** ({c['n']:,} player-games, {c['seasons']}) — "
-                        f"lowest error at model weight **{c['best_model_weight']}** (rest Sleeper)")
-            st.dataframe(pd.DataFrame(c["by_pos"]), hide_index=True)
-    else:
-        st.caption("Run `python -m beatnfl backtest --sleeper` on your computer to test Sleeper's published projections "
-                   "against the model and pick blend weights from evidence.")
+            best = float(c["best_model_weight"])
+            st.markdown(f"{c['n']:,} player-games, seasons {', '.join(map(str, c['seasons']))}: lowest error with "
+                        f"**{best:.0%} model / {1 - best:.0%} Sleeper**.")
+            t, tc = tidy(pd.DataFrame(c["by_pos"]), {"pos": "Pos", "n": "Player-games", "mae_model": "Miss: model",
+                                                     "mae_sleeper": "Miss: Sleeper"},
+                         ints=("Player-games",), two=("Miss: model", "Miss: Sleeper"))
+            show(t, tc)
+            tot = S.w_sleeper + S.w_model
+            st.caption(f"Current weights: Sleeper {S.w_sleeper:.2f} · Model {S.w_model:.2f} (Yours {S.w_paid:.2f} unchanged).")
+            if st.button("Use these weights"):
+                S.w_model, S.w_sleeper = round(best * tot, 2), round((1 - best) * tot, 2)
+                S.save()
+                st.success(f"Saved: Sleeper {S.w_sleeper:.2f} · Model {S.w_model:.2f}. Click ⟳ Refresh to apply.")
+        else:
+            st.caption(c.get("note", "Test returned no data."))
     mab = APP_ROOT / "evidence" / "matchup_ab_test.json"
     if mab.exists():
         m = json.loads(mab.read_text())
@@ -667,7 +927,7 @@ with tab_status:
     st.caption(f"Data folder: `{HOME}` · Drop DKSalaries.csv or projection CSVs in `{INBOX}` · Exports: `{EXPORTS}`")
     stt = storage.data_status()
     if stt.empty:
-        st.info("No runs yet — press Run on the This week tab.")
+        st.info("No runs yet — click ⟳ Refresh (top right).")
     else:
         stt = stt.assign(When=pd.to_datetime(stt.last_attempt_utc, utc=True).dt.tz_convert("America/New_York").dt.strftime("%a %-I:%M %p"),
                          Result=stt.status.map({"ok": "✅ ok", "warn": "⚠️ check", "skip": "⏭️ skipped", "fail": "❌ failed",

@@ -211,7 +211,7 @@ def run_week(settings: Settings | None = None, *, salary_file: Path | bytes | No
             pf, name = pf.read_bytes(), pf.name
         if pf is None:
             run.add("4b. Paid projections", "skip", "No paid projection file in the inbox.",
-                    "Paste your projections table into the box above Run, or drop a projections CSV in your BeatNFL/inbox folder.")
+                    "Paste your projections table on the Load data tab, or drop a projections CSV in your BeatNFL/inbox folder.")
         else:
             pj, mapping = paidcsv.parse(pf, name)
             m, n = projections.match_external(pool, pj, "proj_paid")
@@ -270,19 +270,33 @@ def run_week(settings: Settings | None = None, *, salary_file: Path | bytes | No
     return run
 
 
-def build_lineups(run: WeekRun, opt: optimizer.OptSettings, name: str = "", save=True, export_files=True) -> dict:
+def build_lineups(run: WeekRun, opt: optimizer.OptSettings, name: str = "", save=False, export_files=False) -> dict:
+    """Optimize and validate. Nothing is saved unless asked — use save_lineups() for that."""
     res = optimizer.build(run.pool, opt)
-    out = {"result": res, "set_id": None, "files": []}
+    out = {"result": res, "opt": opt, "set_id": None, "files": [], "duplicate": False}
     if not res.lineups:
         return out
     bad = [i for i, lu in enumerate(res.lineups) if optimizer.validate(lu, run.pool)]
     if bad:
         res.diagnostics.append(f"{len(bad)} lineups failed independent validation and were removed.")
         res.lineups = [lu for i, lu in enumerate(res.lineups) if i not in bad]
-    label = name or (f"{run.season}_wk{run.week}" if run.week else "slate")
-    if save and run.slate_id:
-        out["set_id"] = storage.save_lineup_set(label, run.slate_id, run.run_id, vars(opt), res.lineups, run.pool,
-                                                res.status, res.diagnostics)
-    if export_files:
-        out["files"] = [export.dk_upload(res.lineups, run.pool, label), export.readable(res.lineups, run.pool, label)]
+    proj = run.pool.set_index("dk_id").proj
+    res.lineups = sorted(res.lineups, key=lambda lu: -float(proj.loc[lu].sum()))   # rank 1 = highest projection
+    if save or export_files:
+        out.update(save_lineups(run, out, name, export_files=export_files))
     return out
+
+
+def save_lineups(run: WeekRun, out: dict, name: str = "", export_files=True) -> dict:
+    """Save a built set (skipped if an identical set is already saved) and write the two CSVs to exports."""
+    res = out["result"]
+    label = name or (f"{run.season}_wk{run.week}" if run.week else "slate")
+    r = {"set_id": None, "files": [], "duplicate": False}
+    if run.slate_id:
+        before = storage.find_same_set(run.slate_id, res.lineups)
+        r["set_id"] = before or storage.save_lineup_set(label, run.slate_id, run.run_id, vars(out["opt"]) if out.get("opt") else {},
+                                                        res.lineups, run.pool, res.status, res.diagnostics)
+        r["duplicate"] = before is not None
+    if export_files:
+        r["files"] = [export.dk_upload(res.lineups, run.pool, label), export.readable(res.lineups, run.pool, label)]
+    return r

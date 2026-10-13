@@ -52,8 +52,19 @@ def dk_upload(lineups: list[list[str]], pool: pd.DataFrame, label: str, folder: 
     return path
 
 
+def readable_text(lineups: list[list[str]], pool: pd.DataFrame) -> str:
+    return _readable_df(lineups, pool).to_csv(index=False)
+
+
 def readable(lineups: list[list[str]], pool: pd.DataFrame, label: str, folder: Path = EXPORTS) -> Path:
     ensure_dirs()
+    df = _readable_df(lineups, pool)
+    path = Path(folder) / f"Lineups_{_stamp(label)}.csv"
+    df.to_csv(path, index=False)
+    return path
+
+
+def _readable_df(lineups, pool) -> pd.DataFrame:
     idx = pool.set_index("dk_id")
     rows = []
     for i, lu in enumerate(lineups, 1):
@@ -61,10 +72,7 @@ def readable(lineups: list[list[str]], pool: pd.DataFrame, label: str, folder: P
             r = idx.loc[d]
             rows.append({"lineup": i, "slot": slot, "dk_id": d, "name": r["name"], "pos": r.pos, "team": r.team,
                          "opp": r.opp, "salary": int(r.salary), "proj": round(float(r.proj), 2)})
-    df = pd.DataFrame(rows)
-    path = Path(folder) / f"Lineups_{_stamp(label)}.csv"
-    df.to_csv(path, index=False)
-    return path
+    return pd.DataFrame(rows)
 
 
 def lineup_table(lineups: list[list[str]], pool: pd.DataFrame) -> pd.DataFrame:
@@ -72,7 +80,7 @@ def lineup_table(lineups: list[list[str]], pool: pd.DataFrame) -> pd.DataFrame:
     out = []
     for i, lu in enumerate(lineups, 1):
         r = idx.loc[lu]
-        row = {"#": i}
+        row = {"Rank": i}
         for slot, (_, p) in zip(SLOTS, r.iterrows()):
             k = slot if slot not in row else f"{slot}{sum(1 for c in row if c.startswith(slot)) + 1}"
             row[k] = f"{p['name']} ({p.team})"
@@ -80,7 +88,7 @@ def lineup_table(lineups: list[list[str]], pool: pd.DataFrame) -> pd.DataFrame:
         row["Proj"] = round(float(r.proj.sum()), 1)
         out.append(row)
     df = pd.DataFrame(out)
-    return df[["#", "Proj", "Salary"] + [c for c in df.columns if c not in ("#", "Proj", "Salary")]]
+    return df[["Rank", "Proj", "Salary"] + [c for c in df.columns if c not in ("Rank", "Proj", "Salary")]]
 
 
 def exposure(lineups: list[list[str]], pool: pd.DataFrame) -> pd.DataFrame:

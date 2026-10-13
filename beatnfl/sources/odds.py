@@ -69,6 +69,47 @@ def consensus(lines: pd.DataFrame) -> pd.DataFrame:
     return c
 
 
+def market_summary(lines: pd.DataFrame) -> pd.DataFrame:
+    """Per game: consensus spread/total, median prices, and the market's no-vig probability for
+    home cover, home win (moneyline) and over — median across books, each book's margin removed."""
+    cols = ["home", "away", "spread_nv", "home_spread_price", "away_spread_price", "p_home_cover", "ml_home", "ml_away",
+            "p_home_win", "total", "over_price", "under_price", "p_over", "books"]
+    if lines is None or lines.empty:
+        return pd.DataFrame(columns=cols)
+    out = []
+    for (h, a), g in lines.groupby(["home", "away"]):
+        r = {"home": h, "away": a, "books": g.book.nunique()}
+        sp = g[g.market == "spreads"]
+        sp = sp.drop_duplicates(["book", "side"])
+        hs, as_ = sp[sp.side == h].set_index("book"), sp[sp.side == a].set_index("book")
+        if len(hs):
+            line = hs.line.median()
+            r["spread_nv"] = -line
+            at = hs[hs.line == line].index.intersection(as_.index)
+            r["home_spread_price"] = hs.loc[at, "price"].median() if len(at) else hs.price.median()
+            r["away_spread_price"] = as_.loc[at, "price"].median() if len(at) else as_.price.median()
+            ps = [no_vig(implied_prob(hs.at[b, "price"]), implied_prob(as_.at[b, "price"])) for b in at]
+            r["p_home_cover"] = float(pd.Series(ps, dtype=float).median()) if ps else None
+        ml = g[g.market == "h2h"].drop_duplicates(["book", "side"])
+        hm, am = ml[ml.side == h].set_index("book").price, ml[ml.side == a].set_index("book").price
+        both = hm.index.intersection(am.index)
+        if len(both):
+            r["ml_home"], r["ml_away"] = hm[both].median(), am[both].median()
+            r["p_home_win"] = float(pd.Series([no_vig(implied_prob(hm[b]), implied_prob(am[b])) for b in both]).median())
+        to = g[g.market == "totals"].drop_duplicates(["book", "side"])
+        ov, un = to[to.side == "Over"].set_index("book"), to[to.side == "Under"].set_index("book")
+        if len(ov):
+            line = ov.line.median()
+            r["total"] = line
+            at = ov[ov.line == line].index.intersection(un.index)
+            r["over_price"] = ov.loc[at, "price"].median() if len(at) else ov.price.median()
+            r["under_price"] = un.loc[at, "price"].median() if len(at) else None
+            ps = [no_vig(implied_prob(ov.at[b, "price"]), implied_prob(un.at[b, "price"])) for b in at]
+            r["p_over"] = float(pd.Series(ps, dtype=float).median()) if ps else None
+        out.append(r)
+    return pd.DataFrame(out).reindex(columns=cols)
+
+
 def events(key: str, offline=False) -> list[dict]:
     _need_key(key)
     data, _ = fetch_json(f"{BASE}/events", params={"apiKey": key}, step=STEP, max_age_h=3, offline=offline)

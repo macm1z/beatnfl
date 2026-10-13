@@ -89,8 +89,11 @@ def test_research_all_sources(live):
     lines = odds.consensus(odds.game_lines("k"))
     fc, warns = train.forecast_week(2026, 6, spp, pm, lines)
     assert len(fc) > 250 and fc.p_dk_pts.notna().all()
-    g = research.games_table(2026, 6, lines)
-    assert len(g) >= 13 and (g["Lines from"] == "Odds API (median of books)").sum() >= 13
+    raw = odds.game_lines("k")
+    g = research.games_table(2026, 6, raw)
+    assert len(g) >= 13 and (g._src == "odds_api").sum() >= 13
+    gp = research.game_probs(2026, 6, raw)
+    assert set(gp["Bet type"]) == {"Spread", "Moneyline", "Total"} and gp["Market %"].between(1, 99).all()
     board, info = research.props_board("k", 2026, 6, fc, pm, research.CORE_PROP_MARKETS)
     assert len(board) >= 5 and board.model_p_over.notna().sum() >= 4
     m = research.matchups(2026, 6)
@@ -110,7 +113,7 @@ def test_app_every_button(live, monkeypatch):
     at = AppTest.from_file(str(app), default_timeout=600)
     at.run()
     assert not at.exception, [e.value for e in at.exception]
-    labels = ["Find slates", "▶ Run", "⚙ Build, save & export", "Load roster & projections", "Load matchups",
+    labels = ["⟳ Refresh", "⚙ Build lineups", "💾 Save", "Load roster & projections", "Load matchups",
               "Forecast every player this week", "Load props", "Grade frozen forecasts", "Copy diagnostics", "Check for updates"]
     at.text_area(key="pasted_proj").input("Player\tTeam\tPos\tProj\nJosh Allen\tBUF\tQB\t24.9\nPuka Nacua\tLAR\tWR\t21.0\n")
     for lab in labels:
@@ -126,8 +129,13 @@ def test_app_every_button(live, monkeypatch):
         sb = at.selectbox(key=key)
         sb.set_value(sb.options[min(pick, len(sb.options) - 1)]).run()
         assert not at.exception, f"{key}: {[e.value for e in at.exception]}"
-    at.toggle(key="props_only").set_value(True).run()
-    assert not at.exception
+    for key in ("props_show", "games_show", "games_type", "games_game"):
+        sb = at.selectbox(key=key)
+        sb.set_value(sb.options[1]).run()
+        assert not at.exception, f"{key}: {[e.value for e in at.exception]}"
+    # saved: one set saved, building+saving the same lineups again must not add a duplicate
+    from beatnfl import storage
+    assert len(storage.list_lineup_sets()) >= 1
     run = at.session_state["run"]
     assert any(x.step == "4b. Paid projections" and x.status in ("ok", "warn") and "2 of" in x.message for x in run.steps)
     s.odds_api_key = s.yahoo_client_id = s.yahoo_client_secret = ""
