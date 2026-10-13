@@ -818,3 +818,30 @@ def test_backtest_summary_counts_one_prop_per_player_game():
     s = pb.summarize(pd.DataFrame(rows * 1))
     assert s["n"] == 1 and s["picks"][0]["n"] == 1 and s["picks"][0]["sides"]["over"]["n"] == 1
     assert s["picks"][0]["moved_toward"] == 100.0
+
+
+# ---------------------------------------------------------------- sportsbook lines in the model (v1.11)
+def test_book_lines_move_model_projection(monkeypatch):
+    from beatnfl import market
+    from beatnfl.sources import odds
+    pool = pd.DataFrame({"dk_id": ["1", "2", "3"], "name": ["Drake London", "Bijan Robinson", "Nobody Lines"],
+                         "team": ["ATL", "ATL", "CHI"]})
+    monkeypatch.setattr(odds, "events", lambda *a, **k: [{"id": "e1", "home_team": "Atlanta Falcons", "away_team": "Chicago Bears"}])
+    rows = [{"event_id": "e1", "book": b, "market": m, "stat": st, "player": pl, "side": sd, "line": ln, "price": pr}
+            for b in ("draftkings", "fanduel")
+            for (m, st, pl, sd, ln, pr) in (("player_reception_yds", "rec_yds", "Drake London", "Over", 80.5, -110),
+                                            ("player_reception_yds", "rec_yds", "Drake London", "Under", 80.5, -110),
+                                            ("player_receptions", "rec", "Drake London", "Over", 6.5, -120),
+                                            ("player_anytime_td", "any_td", "Drake London", "Yes", None, 150),
+                                            ("player_rush_yds", "rush_yds", "Bijan Robinson", "Over", 60.5, -110))]
+    monkeypatch.setattr(odds, "props", lambda *a, **k: pd.DataFrame(rows))
+    lines, info = market.slate_lines("k", pool)
+    assert set(lines.dk_id) == {"1", "2"} and lines.set_index("dk_id").at["1", "line_rec_yds"] == 80.5
+    res = pd.DataFrame({"dk_id": ["1", "2", "3"], "proj_model": [15.0, 16.0, 8.0], "p_rec_yds": [70.0, 20.0, 30.0],
+                        "p_rec": [5.5, 3.0, 2.0], "p_rush_yds": [np.nan, 75.0, np.nan], "p_any_td": [0.35, 0.5, 0.2]})
+    out = market.adjust(res, lines).set_index("dk_id")
+    # London: +0.8*0.1*(80.5+4.7-70) + 0.5*1*(6.5-5.5) + TD term (book 40%*.92 vs model 35%)
+    exp_td = 0.5 * 6 * (-np.log(1 - 0.4 * 0.92) + np.log(1 - 0.35))
+    assert abs(out.at["1", "proj_lines_adj"] - round(0.8 * 0.1 * 15.2 + 0.5 + exp_td, 2)) < 0.02
+    assert out.at["2", "proj_model"] < 16.0                                   # books lower on Bijan's rushing
+    assert pd.isna(out.at["3", "proj_lines_adj"]) and out.at["3", "proj_model"] == 8.0

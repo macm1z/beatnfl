@@ -250,6 +250,21 @@ def run_week(settings: Settings | None = None, *, salary_file: Path | bytes | No
             pm, dm, meta = train.get_models(offline=offline, progress=progress)
             run.model_meta = meta
             res, warns, info = train.forecast(pool, sp_players, pm, dm, run.lines, offline=offline)
+            if s.odds_api_key and s.use_book_lines:
+                progress("Reading sportsbook prop lines…")
+                try:
+                    from . import market
+                    bl, binfo = market.slate_lines(s.odds_api_key, pool, offline=offline, progress=progress)
+                    res = market.adjust(res, bl)
+                    moved = res.proj_lines_adj.notna()
+                    run.add("4d. Sportsbook lines", "ok" if binfo["games_with_props"] else "skip",
+                            (f"{int(moved.sum())} players' model projections moved toward the books' prop lines "
+                             f"(average {res.loc[moved, 'proj_lines_adj'].abs().mean():.1f} pts) from {binfo['games_with_props']} "
+                             f"of {binfo['games']} games." if moved.any() else
+                             f"No player props posted yet for this slate's {binfo['games']} games."),
+                            "" if moved.any() else "Books post most props 2–4 days before kickoff; Refresh later in the week.")
+                except Exception as e:  # noqa: BLE001
+                    _err(run, "4d. Sportsbook lines", e, status="warn")
             sources["model"] = res[["dk_id", "proj_model"]].dropna()
             src_meta["model"] = meta
             run.add("4c. In-house model", "ok" if not warns else "warn",

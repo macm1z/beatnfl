@@ -70,6 +70,8 @@ def test_weekly_run_all_sources(live, monkeypatch):
     _no_bugs(run)
     steps = {x.step: x for x in run.steps}
     assert run.slate.route == "json" and steps["1. Slate"].status in ("ok", "warn")
+    assert steps["4d. Sportsbook lines"].status == "ok" and "moved toward" in steps["4d. Sportsbook lines"].message, steps["4d. Sportsbook lines"].as_text()
+    assert run.pool.proj_lines_adj.notna().sum() >= 3
     for k in ("2. Injuries & roles", "2b. Injuries (Yahoo)", "3. Schedule", "3b. Betting lines", "4a. Sleeper projections",
               "4c. In-house model"):
         assert steps[k].status in ("ok", "warn"), steps[k].as_text()

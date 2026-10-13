@@ -34,6 +34,7 @@ class Settings:
     w_sleeper: float = 0.25
     w_model: float = 0.25
     # Tested per-position weights {"QB": {"paid": .4, "sleeper": .3, "model": .3}, …} — override the three above
+    use_book_lines: bool = True     # fold sportsbook prop lines into the model's projection (needs the Odds API key)
     pos_weights: dict = field(default_factory=dict)
     # Tested share of FantasyPros in each stat forecast for Props {"rec_yds": .5, …}
     stat_weights: dict = field(default_factory=dict)

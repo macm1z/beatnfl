@@ -168,11 +168,15 @@ with st.sidebar:
         wp = c1.number_input("Yours", 0.0, 1.0, S.w_paid, 0.05, help="Your projections: FantasyPros API (key in Settings), or a pasted table / CSV")
         ws = c2.number_input("Sleeper", 0.0, 1.0, S.w_sleeper, 0.05)
         wm = c3.number_input("Model", 0.0, 1.0, S.w_model, 0.05)
+        ubl = st.checkbox("Use sportsbook prop lines in the model", S.use_book_lines,
+                          help="Moves the model's projection toward the books' player lines (≈5 Odds API credits per game, "
+                               "reused for 3 hours). Tested on 2025: lower miss on unseen weeks.")
         qh = st.slider("Questionable haircut", 0.5, 1.0, S.questionable_haircut, 0.05,
                        help="Questionable players' Combined projection is multiplied by this.")
         if st.button("Save settings"):
             S.odds_api_key, S.w_paid, S.w_sleeper, S.w_model, S.questionable_haircut = key, wp, ws, wm, qh
             S.fantasypros_api_key = fpkey.strip()
+            S.use_book_lines = bool(ubl)
             S.yahoo_client_id, S.yahoo_client_secret = yid.strip(), ysec.strip()
             S.save()
             st.success("Saved. Click ⟳ Refresh to apply new weights.")
@@ -274,7 +278,8 @@ with tab_week:
                           zip(pool.get("status", ""), pool.get("injury_note", pd.Series("", index=pool.index)))]
         names = {"dk_id": "dk_id", "name": "Player", "pos": "Pos", "team": "Team", "opp": "Opp", "salary": "Salary",
                  "injury": "Injury", "proj": "Combined", "value": "Pts/$1K", "proj_paid": "Yours",
-                 "proj_sleeper": "Sleeper", "proj_model": "Model", "pct_rostered_yahoo": "Yahoo %"}
+                 "proj_sleeper": "Sleeper", "proj_model": "Model", "proj_lines_adj": "Book lines",
+                 "pct_rostered_yahoo": "Yahoo %"}
         w = (f"Yours {S.w_paid:.0%} · Sleeper {S.w_sleeper:.0%} · Model {S.w_model:.0%}" if not S.pos_weights else
              "tested per position: " + "; ".join(f"{ps} " + " ".join(
                  f"{ {'paid': 'Yours', 'sleeper': 'Sleeper', 'model': 'Model'}.get(k, k)} {v:.0%}" for k, v in ww.items())
@@ -292,10 +297,12 @@ with tab_week:
                      "recent usage (snaps, targets, carries, weighted toward recent games), touches freed by injured "
                      "teammates, team pass/run volume, the opponent's points allowed to the position, and the "
                      "betting-implied team total. Accuracy: Evidence tab.",
+            "Book lines": "Points the sportsbooks' prop lines moved the Model number (already included in Model). "
+                          "In the 2025 test, folding the lines in cut the model's average miss on unseen weeks.",
             "Injury": "Worst of DraftKings, Sleeper and Yahoo. Out / Doubtful / IR players are left out of lineups.",
             "Yahoo %": "Share of Yahoo leagues rostering the player.",
         }
-        view, cfg = tidy(pool, names, one=("Combined", "Yours", "Sleeper", "Model"), two=("Pts/$1K",), money=("Salary",),
+        view, cfg = tidy(pool, names, one=("Combined", "Yours", "Sleeper", "Model", "Book lines"), two=("Pts/$1K",), money=("Salary",),
                          ints=("Yahoo %",), helps=helps)
         view.insert(1, "Lock", view.dk_id.isin(ss.get("locks", [])))
         view.insert(2, "Exclude", view.dk_id.isin(ss.get("excludes", [])))
