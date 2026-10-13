@@ -134,4 +134,4 @@ Two checks only run on your computer, because their sources were blocked from th
 - `~/BeatNFL/evidence` — test results
 - `~/BeatNFL/beatnfl.log` — technical detail for any failure
 
-Tests: `.venv/bin/python -m pytest -q tests` (44 offline tests; `BEATNFL_FULL=1` adds 6 end-to-end tests that click every button).
+Tests: `.venv/bin/python -m pytest -q tests` (43 offline tests; `BEATNFL_FULL=1` adds 6 end-to-end tests that click every button).
