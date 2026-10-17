@@ -75,3 +75,15 @@ class Settings:
             os.chmod(SETTINGS_PATH, 0o600)  # holds API keys: readable by your user account only
         except OSError:
             pass
+
+
+def local_tz() -> str:
+    """This computer's time zone name (e.g. America/Denver), for showing kickoff and update times."""
+    import os
+    try:
+        real = os.path.realpath("/etc/localtime")
+        if "zoneinfo/" in real:
+            return real.split("zoneinfo/", 1)[1]
+    except OSError:
+        pass
+    return os.environ.get("TZ") or "America/New_York"

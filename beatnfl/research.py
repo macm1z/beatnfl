@@ -90,10 +90,12 @@ def games_table(season: int, week: int, raw_lines: pd.DataFrame | None = None, o
         if pd.isna(m):
             return ""
         return "Pick'em" if abs(m) < 0.05 else f"{home if m > 0 else away} -{abs(m):.1f}"
+    from .config import local_tz
     kick = pd.to_datetime(g.gameday.astype(str) + " " + g.gametime.astype(str), errors="coerce")
+    kick = kick.dt.tz_localize("America/New_York", ambiguous="NaT", nonexistent="shift_forward").dt.tz_convert(local_tz())
     return pd.DataFrame({
         "Game": g.away + " @ " + g.home,
-        "Kickoff (ET)": [k.strftime("%a %-I:%M %p") if pd.notna(k) else "" for k in kick],
+        "Kickoff": [k.strftime("%a %-I:%M %p") if pd.notna(k) else "" for k in kick],
         "Spread": [f"{_line_txt(a, s)} · {_line_txt(h, -s)}" if pd.notna(s) else "no line yet"
                    for a, h, s in zip(g.away, g.home, g.spread_nv)],
         "Moneyline": [f"{a} {_odds_txt(ma)} · {h} {_odds_txt(mh)}" if pd.notna(ma) and pd.notna(mh) else ""
@@ -457,7 +459,8 @@ def picks_view(p: pd.DataFrame) -> pd.DataFrame:
     """Readable midweek list."""
     if p is None or p.empty:
         return pd.DataFrame()
-    kick = pd.to_datetime(p.commence, utc=True, errors="coerce").dt.tz_convert("America/New_York")
+    from .config import local_tz
+    kick = pd.to_datetime(p.commence, utc=True, errors="coerce").dt.tz_convert(local_tz())
     return pd.DataFrame({
         "Game": p.game, "Kickoff": [k.strftime("%a %-I:%M %p") if pd.notna(k) else "" for k in kick],
         "Player": p.player,

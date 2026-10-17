@@ -34,7 +34,8 @@ def _drop_stale_modules():
 _drop_stale_modules()
 
 from beatnfl import __version__, export, optimizer, pipeline, storage  # noqa: E402
-from beatnfl.config import EXPORTS, HOME, INBOX, LOG_PATH, Settings, ensure_dirs  # noqa: E402
+from beatnfl.config import EXPORTS, HOME, INBOX, LOG_PATH, Settings, ensure_dirs, local_tz  # noqa: E402
+TZ = local_tz()
 from beatnfl.errors import StepError  # noqa: E402
 
 st.set_page_config(page_title="BeatNFL", page_icon="🏈", layout="wide")
@@ -277,7 +278,7 @@ if refresh:
                           use_model=ss.get("use_model", True), offline=offline, progress=lambda m: status.write(m))
     status.update(label="Done", state="complete", expanded=False)
     ss["run"], ss["lineups"], ss["saved_info"] = r, None, None
-    ss["run_at"] = pd.Timestamp.now(tz="America/New_York").strftime("%a %-I:%M %p")
+    ss["run_at"] = pd.Timestamp.now(tz=TZ).strftime("%a %-I:%M %p")
     st.rerun()
 
 tab_week, tab_saved, tab_games, tab_props, tab_picks, tab_yahoo, tab_evidence, tab_load, tab_status = st.tabs(
@@ -430,7 +431,7 @@ with tab_saved:
     else:
         dups = storage.duplicate_sets()
         sv = sets.copy()
-        sv["Created"] = pd.to_datetime(sv.created_utc, utc=True).dt.tz_convert("America/New_York").dt.strftime("%a %b %-d, %-I:%M %p")
+        sv["Created"] = pd.to_datetime(sv.created_utc, utc=True).dt.tz_convert(TZ).dt.strftime("%a %b %-d, %-I:%M %p")
         sv["Week"] = [f"{int(s_)} wk {int(w_)}" if pd.notna(s_) and pd.notna(w_) else "" for s_, w_ in zip(sv.season, sv.week)]
         sv["Duplicate of"] = sv.id.map(lambda i: f"#{dups[i]}" if i in dups else "")
         sv.insert(0, "Select", False)
@@ -490,7 +491,7 @@ with tab_saved:
             keep = [all(any(idxp.at[x, "name"] == p for x in lu) for p in has) for lu in lus]
             tbl = tbl[keep]
         st.caption(f"{len(d['lineups'])} lineups · created "
-                   f"{pd.Timestamp(d['created_utc']).tz_convert('America/New_York'):%a %b %-d, %-I:%M %p} · "
+                   f"{pd.Timestamp(d['created_utc']).tz_convert(TZ):%a %b %-d, %-I:%M %p} · "
                    + ("all valid against the saved slate" if not bad else f"invalid: {bad}")
                    + (f" · showing {len(tbl)} with {', '.join(has)}" if has else ""))
         st.dataframe(tbl, hide_index=True, width="stretch", column_config={
@@ -603,7 +604,7 @@ with tab_games:
                                 "Moneyline": " · ".join(f"{t} {_o(ml_.at[t, 'price'])}" for t in (a_, h_) if t in ml_.index),
                                 "Total": (f"{to_.at['Over', 'line']:g} (o {_o(to_.at['Over', 'price'])} / u "
                                           f"{_o(to_.at['Under', 'price']) if 'Under' in to_.index else ''})" if "Over" in to_.index else ""),
-                                "Updated": ts_.tz_convert("America/New_York").strftime("%a %-I:%M %p") if pd.notna(ts_) else ""})
+                                "Updated": ts_.tz_convert(TZ).strftime("%a %-I:%M %p") if pd.notna(ts_) else ""})
                         st.dataframe(pd.DataFrame(out_), hide_index=True, width="stretch")
 
             st.subheader("Chances: market vs model")
@@ -1258,7 +1259,7 @@ with tab_status:
     if stt.empty:
         st.info("No runs yet — click ⟳ Refresh (top right).")
     else:
-        stt = stt.assign(When=pd.to_datetime(stt.last_attempt_utc, utc=True).dt.tz_convert("America/New_York").dt.strftime("%a %-I:%M %p"),
+        stt = stt.assign(When=pd.to_datetime(stt.last_attempt_utc, utc=True).dt.tz_convert(TZ).dt.strftime("%a %-I:%M %p"),
                          Result=stt.status.map({"ok": "✅ ok", "warn": "⚠️ check", "skip": "⏭️ skipped", "fail": "❌ failed",
                                                 "failed": "❌ failed"}).fillna(stt.status))
         st.dataframe(stt.rename(columns={"source": "Step", "message": "Last message"})[["Step", "Result", "When", "Last message"]],
