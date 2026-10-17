@@ -139,9 +139,18 @@ def week_picker(prefix: str):
 
     def sync():
         ss[f"{other}_season"], ss[f"{other}_week"] = ss[f"{prefix}_season"], ss[f"{prefix}_week"]
-    c1, c2, _ = st.columns([1, 1, 4])
+        ss["week_auto"] = (int(ss[f"{prefix}_season"]), int(ss[f"{prefix}_week"])) == ss.get("current_week")
+
+    def back_to_current():
+        ss["week_auto"] = True
+        ss["g_season"], ss["g_week"] = ss["p_season"], ss["p_week"] = ss["current_week"]
+    c1, c2, c3, _ = st.columns([1, 1, 1.3, 2.7], vertical_alignment="bottom")
     c1.number_input("Season", 2015, 2035, key=f"{prefix}_season", on_change=sync)
     c2.number_input("Week", 1, 22, key=f"{prefix}_week", on_change=sync)
+    if ss.get("week_auto", True):
+        c3.caption("✓ current week")
+    else:
+        c3.button("↺ Current week", key=f"{prefix}_now", on_click=back_to_current)
     return int(ss[f"{prefix}_season"]), int(ss[f"{prefix}_week"])
 
 
@@ -225,14 +234,19 @@ with st.sidebar:
                 st.info(_sched.install(_on))
     offline = st.toggle("Offline mode (use cached data only)", False)
 
-# default week for Games / Props
-if "g_season" not in ss:
+# Games / Props / Picks follow the current NFL week automatically (rechecked every 10 minutes), unless you
+# pick another week — then "↺ Current week" brings it back.
+import time as _time  # noqa: E402
+if "current_week" not in ss or _time.time() - ss.get("current_week_at", 0) > 600:
     from beatnfl.sources import nflverse as _nv
     try:
         _d = _nv.upcoming_week(_nv.schedules(offline=offline))
     except Exception:  # noqa: BLE001
-        _d = (_nv.current_season(), 1)
-    ss["g_season"], ss["g_week"] = ss["p_season"], ss["p_week"] = int(_d[0]), int(_d[1])
+        _d = ss.get("current_week") or (_nv.current_season(), 1)
+    ss["current_week"], ss["current_week_at"] = (int(_d[0]), int(_d[1])), _time.time()
+if ss.get("week_auto", True) or "g_season" not in ss:
+    ss["week_auto"] = True
+    ss["g_season"], ss["g_week"] = ss["p_season"], ss["p_week"] = ss["current_week"]
 
 
 def _slate_choice():

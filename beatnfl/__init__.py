@@ -4,4 +4,4 @@ No betting, no sportsbook logins, no contest entry. The app reads public data,
 builds projections and lineups, and writes files you upload yourself.
 """
 
-__version__ = "1.11.1"
+__version__ = "1.11.2"

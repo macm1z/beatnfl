@@ -863,3 +863,17 @@ def test_lineup_alerts_flag_players_ruled_out_after_saving():
     al = pipeline.lineup_alerts(run)
     hit = al[(al.status == "O") & (al.set_name == "alerts")]
     assert len(hit) == 1 and hit.iloc[0].dk_id == star and hit.iloc[0].lineups >= 1
+
+
+def test_current_week_follows_kickoffs_not_game_counts():
+    from beatnfl.sources import nflverse as nv
+    rows = [(6, "2026-10-15", "20:15")] + [(6, "2026-10-18", "13:00")] * 12 + [(6, "2026-10-19", "20:15")] \
+        + [(7, "2026-10-22", "20:15")] + [(7, "2026-10-25", "13:00")] * 13
+    s = pd.DataFrame({"season": 2026, "game_type": "REG", "week": [w for w, _, _ in rows],
+                      "gameday": [d for _, d, _ in rows], "gametime": [t for _, _, t in rows]})
+    at = lambda t: nv.upcoming_week(s, pd.Timestamp(t, tz="America/New_York"))
+    assert at("2026-10-13 09:00") == (2026, 6)
+    assert at("2026-10-17 11:00") == (2026, 6)     # after Thursday night: still this week (the old rule jumped to 7)
+    assert at("2026-10-18 15:00") == (2026, 6)     # Sunday afternoon
+    assert at("2026-10-19 23:00") == (2026, 6)     # Monday night game in progress
+    assert at("2026-10-20 09:00") == (2026, 7)     # Tuesday morning → next week

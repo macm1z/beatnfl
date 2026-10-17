@@ -166,14 +166,19 @@ def team_metrics(seasons, offline=False, progress=lambda m: None) -> pd.DataFram
     return pd.concat(out, ignore_index=True)
 
 
-def upcoming_week(sched: pd.DataFrame) -> tuple[int, int]:
-    """The week most upcoming games belong to. Late in a week (e.g. Monday night), one leftover game
-    doesn't count — the following week with a full slate is chosen."""
-    up = sched[sched.home_score.isna() & (sched.game_type == "REG")]
-    if up.empty:
+def upcoming_week(sched: pd.DataFrame, now: pd.Timestamp | None = None) -> tuple[int, int]:
+    """The current NFL week: the week of the next game to kick off (games that kicked off within the
+    last 4 hours still count, so Sunday afternoon stays on Sunday's week). Tuesday morning after
+    Monday night it moves to the next week; it never sticks on a finished week."""
+    now = now or pd.Timestamp.now(tz="America/New_York")
+    g = sched[sched.game_type.isin(["REG", "WC", "DIV", "CON", "SB"])].copy()
+    if g.empty:
         return current_season(), 1
-    first = up.sort_values(["season", "week"]).iloc[0]
-    nxt = up[(up.season == first.season) & up.week.isin([first.week, first.week + 1])]
-    cnt = nxt.groupby("week").size()
-    wk = int(cnt.idxmax())
-    return int(first.season), wk
+    kick = pd.to_datetime(g.gameday.astype(str) + " " + g.gametime.fillna("13:00").astype(str), errors="coerce")
+    g["kick"] = kick.dt.tz_localize("America/New_York", ambiguous="NaT", nonexistent="shift_forward")
+    live = g[g.kick >= now - pd.Timedelta(hours=4)].sort_values("kick")
+    if live.empty:
+        last = g.sort_values("kick").iloc[-1]
+        return int(last.season), int(last.week)
+    first = live.iloc[0]
+    return int(first.season), int(first.week)
