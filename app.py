@@ -548,15 +548,30 @@ with tab_games:
     st.caption("Information only. The game model has **not** beaten closing lines historically — see Evidence. "
                "Treat model numbers as a second opinion, not a pick.")
     season, week = week_picker("g")
-    raw = raw_lines()
+    raw_all = raw_lines()
     from beatnfl import research
+    raw, book_pick = raw_all, None
+    if raw_all is not None and not raw_all.empty:
+        bk_keys = sorted(raw_all.book.unique(), key=lambda k: (k != "draftkings", research.book_name(k)))
+        labels_b = [research.book_name(k) for k in bk_keys] + ["All books (median)"]
+        pick_b = st.selectbox("Sportsbook", labels_b, key="games_book",
+                              help="Lines and chances from one sportsbook, or the median across every book the Odds API covers.")
+        if pick_b != "All books (median)":
+            book_pick = bk_keys[labels_b.index(pick_b)]
+            raw = raw_all[raw_all.book == book_pick]
+        if raw_all.retrieved_stale.any():
+            st.warning("Live lines couldn't be refreshed just now — these are the last ones downloaded. Check your "
+                       "Odds API credits (Settings) and connection.")
     try:
         gt = research.games_table(season, week, raw, offline=offline)
         if gt.empty:
             st.info(f"No games found for {season} week {week}.")
         else:
-            src = "Odds API — median of all books" if (gt._src == "odds_api").any() else \
-                "nflverse schedule (add an Odds API key in Settings for live lines from every book)"
+            src = ((f"{research.book_name(book_pick)} via the Odds API" if book_pick else "Odds API — median of all books")
+                   if (gt._src == "odds_api").any() else
+                   "nflverse schedule (add an Odds API key in Settings for live lines from every book)")
+            if book_pick and (gt._src != "odds_api").any():
+                src += f"; games {research.book_name(book_pick)} hasn't posted use the schedule's consensus line"
             st.subheader("Lines")
             show(gt.drop(columns="_src"), {
                 "Spread": st.column_config.Column("Spread", help="Both teams' point spreads. Minus = favourite."),
@@ -565,6 +580,31 @@ with tab_games:
                 "Model spread": st.column_config.Column("Model spread", help="BeatNFL's game model alone (team ratings from results this season and last)."),
                 "Model total": st.column_config.NumberColumn("Model total", format="%.1f")}, height=38 + 35 * len(gt))
             st.caption(f"Lines from: {src}.")
+            if raw_all is not None and not raw_all.empty:
+                with st.expander("Every sportsbook's line for one game"):
+                    gsel = st.selectbox("Game", list(gt.Game), key="games_book_game")
+                    a_, h_ = gsel.split(" @ ")
+                    rb = raw_all[(raw_all.home == h_) & (raw_all.away == a_)]
+                    if rb.empty:
+                        st.caption("No live lines for this game.")
+                    else:
+                        def _o(v):
+                            return "" if pd.isna(v) else (f"+{int(v)}" if v > 0 else str(int(v)))
+                        out_ = []
+                        for bk, g_ in rb.groupby("book"):
+                            sp_ = g_[g_.market == "spreads"].drop_duplicates("side").set_index("side")
+                            ml_ = g_[g_.market == "h2h"].drop_duplicates("side").set_index("side")
+                            to_ = g_[g_.market == "totals"].drop_duplicates("side").set_index("side")
+                            ts_ = pd.to_datetime(g_.source_ts, utc=True, errors="coerce").max()
+                            out_.append({
+                                "Book": research.book_name(bk),
+                                "Spread": " · ".join(f"{t} {sp_.at[t, 'line']:+g} ({_o(sp_.at[t, 'price'])})" for t in (a_, h_)
+                                                      if t in sp_.index) if len(sp_) else "",
+                                "Moneyline": " · ".join(f"{t} {_o(ml_.at[t, 'price'])}" for t in (a_, h_) if t in ml_.index),
+                                "Total": (f"{to_.at['Over', 'line']:g} (o {_o(to_.at['Over', 'price'])} / u "
+                                          f"{_o(to_.at['Under', 'price']) if 'Under' in to_.index else ''})" if "Over" in to_.index else ""),
+                                "Updated": ts_.tz_convert("America/New_York").strftime("%a %-I:%M %p") if pd.notna(ts_) else ""})
+                        st.dataframe(pd.DataFrame(out_), hide_index=True, width="stretch")
 
             st.subheader("Chances: market vs model")
             gp = research.game_probs(season, week, raw, offline=offline)

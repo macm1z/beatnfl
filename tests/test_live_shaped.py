@@ -177,7 +177,7 @@ def test_app_every_button(live, monkeypatch):
         sb = at.selectbox(key=key)
         sb.set_value(sb.options[min(pick, len(sb.options) - 1)]).run()
         assert not at.exception, f"{key}: {[e.value for e in at.exception]}"
-    for key in ("props_show", "games_show", "games_type", "games_game"):
+    for key in ("props_show", "games_show", "games_type", "games_game", "games_book", "games_book_game"):
         sb = at.selectbox(key=key)
         sb.set_value(sb.options[1]).run()
         assert not at.exception, f"{key}: {[e.value for e in at.exception]}"
