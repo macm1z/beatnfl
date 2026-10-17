@@ -750,10 +750,12 @@ def test_picks_logged_once_and_graded_with_clv(monkeypatch):
 
 def test_mac_schedule_plists():
     from beatnfl import schedule
-    p = schedule.plist("com.beatnfl.midweek")
+    p = schedule.plist("com.beatnfl.midweek", tz="America/New_York")
     assert p["ProgramArguments"][-3:] == ["beatnfl", "midweek", "--notify"]
     assert p["StartCalendarInterval"] == [{"Weekday": 3, "Hour": 19, "Minute": 0}]
-    c = schedule.plist("com.beatnfl.close")
+    den = schedule.plist("com.beatnfl.gamecheck", tz="America/Denver")["StartCalendarInterval"]
+    assert {"Weekday": 0, "Hour": 9, "Minute": 50} in den       # 11:50 AM Eastern = 9:50 AM in Denver
+    c = schedule.plist("com.beatnfl.close", tz="America/New_York")
     assert {t["Weekday"] for t in c["StartCalendarInterval"]} == {0, 1, 4}
     import plistlib
     assert plistlib.loads(plistlib.dumps(p))["Label"] == "com.beatnfl.midweek"

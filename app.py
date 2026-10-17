@@ -34,8 +34,8 @@ def _drop_stale_modules():
 _drop_stale_modules()
 
 from beatnfl import __version__, export, optimizer, pipeline, storage  # noqa: E402
-from beatnfl.config import EXPORTS, HOME, INBOX, LOG_PATH, Settings, ensure_dirs, local_tz  # noqa: E402
-TZ = local_tz()
+from beatnfl.config import EXPORTS, HOME, INBOX, LOG_PATH, Settings, ensure_dirs  # noqa: E402
+TZ = "America/New_York"   # all times shown in Eastern (NFL time), wherever the computer is
 from beatnfl.errors import StepError  # noqa: E402
 
 st.set_page_config(page_title="BeatNFL", page_icon="🏈", layout="wide")
@@ -227,6 +227,11 @@ with st.sidebar:
                 st.info("Close the BeatNFL window and start it again to load the update.")
     from beatnfl import schedule as _sched
     if _sched.supported():
+        if "tz_synced" not in ss:
+            ss["tz_synced"] = True
+            _note = _sched.keep_in_sync()
+            if _note:
+                st.caption(_note)
         with st.expander("Automatic checks"):
             st.caption("Runs in the background while your Mac is awake and notifies you: Wednesday 7 PM picks list · "
                        "game-day lineup check after inactives post · closing prices before kickoffs.")

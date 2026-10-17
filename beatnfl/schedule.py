@@ -6,7 +6,8 @@
   Closing prices  shortly before each kickoff window (Thu 6:30 PM, Sun 11:45 AM / 3:15 PM / 7:30 PM,
                   Mon 7:30 PM) — records the last prices for games that have logged picks, for grading.
 
-Times are your Mac's local time. Runs only while the Mac is awake (a missed run happens at next wake).
+Times above are US Eastern (NFL kickoff time); they're converted to your Mac's time zone when the
+schedule is installed, and re-converted automatically if you travel to another time zone. Runs only while the Mac is awake (a missed run happens at next wake).
 Nothing here places a bet or opens a sportsbook. Turn it off any time from Settings.
 """
 
@@ -45,16 +46,50 @@ def _python() -> str:
     return str(v if v.exists() else sys.executable)
 
 
-def plist(label: str) -> dict:
+def to_local(times: list[dict], tz: str | None = None) -> list[dict]:
+    """Eastern weekday/hour/minute → the same moment in this Mac's time zone (launchd uses local time)."""
+    import pandas as pd
+    from .config import local_tz
+    tz = tz or local_tz()
+    base = pd.Timestamp("2026-10-18", tz="America/New_York")          # a Sunday (launchd Weekday 0)
+    out = []
+    for t in times:
+        et = base + pd.Timedelta(days=t["Weekday"], hours=t["Hour"], minutes=t["Minute"])
+        lt = et.tz_convert(tz)
+        out.append({"Weekday": (lt.weekday() + 1) % 7, "Hour": lt.hour, "Minute": lt.minute})
+    return out
+
+
+def plist(label: str, tz: str | None = None) -> dict:
     args, times = JOBS[label]
     return {"Label": label, "ProgramArguments": [_python(), "-m", "beatnfl", *args],
-            "WorkingDirectory": str(APP_DIR), "StartCalendarInterval": times,
+            "WorkingDirectory": str(APP_DIR), "StartCalendarInterval": to_local(times, tz),
             "StandardOutPath": str(HOME / "schedule.log"), "StandardErrorPath": str(HOME / "schedule.log"),
             "RunAtLoad": False}
 
 
 def installed() -> bool:
     return all((AGENTS / f"{k}.plist").exists() for k in JOBS)
+
+
+TZ_MARK = HOME / "schedule_tz.txt"
+
+
+def keep_in_sync() -> str | None:
+    """If the checks are on and this Mac's time zone changed since they were scheduled (travel),
+    reschedule them so they still fire at the right Eastern times. Returns a note when it did."""
+    from .config import local_tz
+    if not (supported() and installed()):
+        return None
+    tz = local_tz()
+    try:
+        prev = TZ_MARK.read_text().strip()
+    except OSError:
+        prev = ""
+    if prev == tz:
+        return None
+    install(True)
+    return f"Automatic checks re-timed for your time zone ({tz})."
 
 
 def install(on: bool = True) -> str:
@@ -66,6 +101,8 @@ def install(on: bool = True) -> str:
         subprocess.run(["launchctl", "unload", str(p)], capture_output=True)
         if on:
             p.write_bytes(plistlib.dumps(plist(label)))
+            from .config import local_tz
+            TZ_MARK.write_text(local_tz())
             r = subprocess.run(["launchctl", "load", str(p)], capture_output=True, text=True)
             if r.returncode != 0:
                 return f"Couldn't schedule {label}: {r.stderr.strip()[:200]}"
