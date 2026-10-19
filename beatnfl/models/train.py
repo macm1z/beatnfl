@@ -66,6 +66,39 @@ def get_models(offline=False, force=False, progress=lambda m: None):
 
 
 # ------------------------------------------------------------------ live slate forecast
+def expected_starters(tg: pd.DataFrame, season: int, week: int, sleeper_players: pd.DataFrame | None,
+                      active_ids: set | None = None, out_ids: set | None = None) -> pd.DataFrame:
+    """Fill in each team's expected starting QB for a week that hasn't been played: Sleeper's depth-chart
+    QB1 if he isn't ruled out, else the team's most recent listed starter (if not ruled out).
+    `active_ids` (when given) limits the choice to players expected to play, e.g. the DraftKings slate."""
+    tg = tg.copy()
+    if "qb_id" not in tg:
+        return tg
+    m = (tg.season == season) & (tg.week == week)
+    out_ids = set(out_ids or ())
+    depth = {}
+    if sleeper_players is not None and not sleeper_players.empty and "depth_order" in sleeper_players:
+        sp = sleeper_players[(sleeper_players.pos == "QB") & sleeper_players.gsis_id.notna()
+                             & ~sleeper_players.injury.isin(["O", "IR", "D", "OUT"])].copy()
+        sp["depth_order"] = pd.to_numeric(sp.depth_order, errors="coerce")
+        for t, g in sp.sort_values("depth_order").groupby("team"):
+            for gid in g.gsis_id:
+                if gid not in out_ids and (active_ids is None or gid in active_ids):
+                    depth[t] = gid
+                    break
+    past = tg[(tg.season < season) | ((tg.season == season) & (tg.week < week))].dropna(subset=["qb_id"])
+    last = past.sort_values(["season", "week"]).groupby("team").qb_id.last()
+    for i in tg.index[m]:
+        t = tg.at[i, "team"]
+        if pd.notna(tg.at[i, "qb_id"]):
+            continue
+        pick = depth.get(t)
+        if pick is None and t in last.index and last[t] not in out_ids and (active_ids is None or last[t] in active_ids):
+            pick = last[t]
+        tg.at[i, "qb_id"] = pick
+    return tg
+
+
 def locate_week(slate: pd.DataFrame, sched: pd.DataFrame) -> tuple[int, int, pd.DataFrame]:
     """Find the nflverse season/week for the slate's games. Refuses to guess across weeks."""
     from ..names import team as nt
@@ -151,6 +184,9 @@ def forecast(slate: pd.DataFrame, sleeper_players: pd.DataFrame | None, pm: Play
     fut = pd.DataFrame({"player_id": fut.player_id, "name": fut.name, "position": fut.pos, "season": season,
                         "week": week, "game_id": fut.game_id, "team": fut.team, "opp": fut.opp, "dk_pts": np.nan,
                         **{c: np.nan for c in F.STAT_COLS.values()}, "any_td": np.nan, "played": 1})
+    # expected starting QBs (Sleeper depth chart QB1, else last starter), limited to slate players not ruled out
+    outs = set(sl[sl.status.isin(out_status)].player_id.dropna())
+    tg = expected_starters(tg, season, week, sleeper_players, active_ids=set(active.player_id), out_ids=outs)
     # teammates in history who are not on the slate but are not ruled out still "occupy" volume only if they
     # appear on the slate; players missing from the slate entirely are treated as inactive (vacated)
     feat = F.build(pd.concat([hist, fut], ignore_index=True), tg)
@@ -222,6 +258,9 @@ def forecast_week(season: int, week: int, sleeper_players: pd.DataFrame | None, 
     fut = pd.DataFrame({"player_id": act.player_id, "name": act.name, "position": act.position, "season": season,
                         "week": week, "game_id": act.game_id, "team": act.team, "opp": act["opp"], "dk_pts": np.nan,
                         **{c: np.nan for c in F.STAT_COLS.values()}, "any_td": np.nan, "played": 1})
+    outs = set(sleeper_players[sleeper_players.injury.isin(["O", "IR", "D"])].gsis_id.dropna()) \
+        if sleeper_players is not None and not sleeper_players.empty else set()
+    tg = expected_starters(tg, season, week, sleeper_players, active_ids=set(act.player_id), out_ids=outs)
     feat = F.build(pd.concat([hist, fut], ignore_index=True), tg)
     fx = feat[(feat.season == season) & (feat.week == week)].reset_index(drop=True)
     pr = pm.predict(fx)

@@ -69,17 +69,20 @@ def snaps(seasons, offline=False) -> pd.DataFrame:
 
 
 def team_games(sched: pd.DataFrame) -> pd.DataFrame:
-    """One row per team per game, with closing spread/total and implied team total.
+    """One row per team per game, with closing spread/total, implied team total and the listed
+    starting QB (qb_id; blank for games not yet played — the live forecast fills in the expected starter).
 
     nflverse spread_line is the home team's expected margin (positive = home favoured).
     """
     g = sched[sched.game_type == "REG"].copy()
     home = pd.DataFrame({"game_id": g.game_id, "season": g.season, "week": g.week, "team": g.home_team,
                          "opp": g.away_team, "home": 1, "pf": g.home_score, "pa": g.away_score,
-                         "spread": g.spread_line, "total": g.total_line, "gameday": g.gameday, "gametime": g.gametime})
+                         "spread": g.spread_line, "total": g.total_line, "gameday": g.gameday, "gametime": g.gametime,
+                         "qb_id": g.home_qb_id if "home_qb_id" in g else None})
     away = pd.DataFrame({"game_id": g.game_id, "season": g.season, "week": g.week, "team": g.away_team,
                          "opp": g.home_team, "home": 0, "pf": g.away_score, "pa": g.home_score,
-                         "spread": -g.spread_line, "total": g.total_line, "gameday": g.gameday, "gametime": g.gametime})
+                         "spread": -g.spread_line, "total": g.total_line, "gameday": g.gameday, "gametime": g.gametime,
+                         "qb_id": g.away_qb_id if "away_qb_id" in g else None})
     t = pd.concat([home, away], ignore_index=True)
     t["implied"] = (t.total + t.spread) / 2
     return t

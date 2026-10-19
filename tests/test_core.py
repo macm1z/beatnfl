@@ -879,3 +879,19 @@ def test_current_week_follows_kickoffs_not_game_counts():
     assert at("2026-10-18 15:00") == (2026, 6)     # Sunday afternoon
     assert at("2026-10-19 23:00") == (2026, 6)     # Monday night game in progress
     assert at("2026-10-20 09:00") == (2026, 7)     # Tuesday morning → next week
+
+
+def test_expected_starting_qb_skips_ruled_out_and_backups():
+    from beatnfl.models import train
+    tg = pd.DataFrame({"team": ["CIN", "CIN", "CIN", "KC"], "season": 2026, "week": [4, 5, 6, 6],
+                       "qb_id": ["burrow", "burrow", None, None]})
+    sp = pd.DataFrame({"gsis_id": ["burrow", "browning", "mahomes"], "pos": "QB", "team": ["CIN", "CIN", "KC"],
+                       "injury": ["O", "", ""], "depth_order": [1, 2, 1]})
+    out = train.expected_starters(tg, 2026, 6, sp, out_ids={"burrow"}).set_index("team")
+    wk6 = out[out.week == 6].qb_id
+    assert wk6["CIN"] == "browning" and wk6["KC"] == "mahomes"
+    # no Sleeper data: last listed starter, unless he's ruled out
+    out2 = train.expected_starters(tg, 2026, 6, None).set_index("team")
+    assert out2[out2.week == 6].qb_id["CIN"] == "burrow"
+    out3 = train.expected_starters(tg, 2026, 6, None, out_ids={"burrow"}).set_index("team")
+    assert pd.isna(out3[out3.week == 6].qb_id["CIN"])

@@ -1,0 +1,89 @@
+{
+ "verdict": "The listed starting QB (and whether he's new) lowered the miss every season \u2014 added to the model (pm-1.4). Game-day wind helped only in very windy games and was mixed overall, so it isn't used.",
+ "rows": [
+  {
+   "Stat": "DK points",
+   "Season": 2022,
+   "Miss: before": 4.677,
+   "With starting QB": 4.644,
+   "With wind": 4.679
+  },
+  {
+   "Stat": "DK points",
+   "Season": 2023,
+   "Miss: before": 4.535,
+   "With starting QB": 4.5,
+   "With wind": 4.515
+  },
+  {
+   "Stat": "DK points",
+   "Season": 2024,
+   "Miss: before": 4.609,
+   "With starting QB": 4.583,
+   "With wind": 4.627
+  },
+  {
+   "Stat": "DK points",
+   "Season": 2025,
+   "Miss: before": 4.485,
+   "With starting QB": 4.444,
+   "With wind": 4.489
+  },
+  {
+   "Stat": "Pass yds",
+   "Season": 2022,
+   "Miss: before": 62.617,
+   "With starting QB": 56.453,
+   "With wind": 61.836
+  },
+  {
+   "Stat": "Pass yds",
+   "Season": 2023,
+   "Miss: before": 64.433,
+   "With starting QB": 58.973,
+   "With wind": 63.936
+  },
+  {
+   "Stat": "Pass yds",
+   "Season": 2024,
+   "Miss: before": 63.601,
+   "With starting QB": 59.396,
+   "With wind": 62.997
+  },
+  {
+   "Stat": "Pass yds",
+   "Season": 2025,
+   "Miss: before": 62.332,
+   "With starting QB": 55.835,
+   "With wind": 62.702
+  },
+  {
+   "Stat": "Rec yds",
+   "Season": 2022,
+   "Miss: before": 16.741,
+   "With starting QB": 16.668,
+   "With wind": 16.792
+  },
+  {
+   "Stat": "Rec yds",
+   "Season": 2023,
+   "Miss: before": 16.506,
+   "With starting QB": 16.569,
+   "With wind": 16.502
+  },
+  {
+   "Stat": "Rec yds",
+   "Season": 2024,
+   "Miss: before": 16.263,
+   "With starting QB": 16.245,
+   "With wind": 16.275
+  },
+  {
+   "Stat": "Rec yds",
+   "Season": 2025,
+   "Miss: before": 15.708,
+   "With starting QB": 15.737,
+   "With wind": 15.707
+  }
+ ]
+}

@@ -1214,6 +1214,11 @@ with tab_evidence:
         st.markdown(f"**Sportsbook lines in the model** — {m_['verdict']}")
         st.dataframe(pd.DataFrame(m_["rows"]), hide_index=True)
         st.caption(m_["note"] + " For DK points the 'book line' column is the model with the lines folded in.")
+    qab = APP_ROOT / "evidence" / "qb_weather_ab_test.json"
+    if qab.exists():
+        m_ = json.loads(qab.read_text())
+        st.markdown(f"**Starting QB and weather as model inputs** — {m_['verdict']}")
+        st.dataframe(pd.DataFrame(m_["rows"]), hide_index=True)
     sab = APP_ROOT / "evidence" / "snaps_ab_test.json"
     if sab.exists():
         m_ = json.loads(sab.read_text())

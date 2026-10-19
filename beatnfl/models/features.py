@@ -143,6 +143,11 @@ def build(rows: pd.DataFrame, tg: pd.DataFrame, tm: pd.DataFrame | None = None) 
     df["x_rush"] = df.e_rush_share * df.e_t_rush_att * (1 + 0.012 * df.spread.fillna(0)) * (1 + df.vac_rush.clip(0, 0.7) * 0.8)
     df["implied_ratio"] = df.implied / df.e_t_pf
     df["pos_code"] = df.position.map({"QB": 0, "RB": 1, "WR": 2, "TE": 3})
+    # ---- starting quarterback (listed starter; tested 2022–2025: lower miss every season, see Evidence)
+    df = df.merge(_qb_context(df, tg), on=["team", "season", "week"], how="left")
+    df["is_starter"] = np.where(df.position == "QB", (df.player_id == df.qb_id).astype(float), 0.0)
+    df.loc[(df.position == "QB") & df.qb_id.isna(), "is_starter"] = np.nan
+    df = df.drop(columns=["qb_id"])
     # ---- snap share, prior games only (this game's snaps are unknown at forecast time)
     if "snap_pct" not in df:
         df["snap_pct"] = np.nan
@@ -193,12 +198,51 @@ def _dvp(df: pd.DataFrame) -> pd.DataFrame:
     return a[["opp", "position", "season", "week", "dvp"]]
 
 
+def _qb_context(df: pd.DataFrame, tg: pd.DataFrame) -> pd.DataFrame:
+    """Per team-game: who starts at QB, whether that's a change from the usual starter, and the
+    starter's track record going in (prior games only)."""
+    cols = ["team", "season", "week", "qb_id", "qb_new", "qb_e_ypa", "qb_e_dk", "qb_starts", "qb_dk_drop"]
+    if "qb_id" not in tg:
+        return pd.DataFrame(columns=cols)
+    st = tg[["team", "season", "week", "qb_id"]].drop_duplicates(["team", "season", "week"]).copy()
+    st["order"] = (st.season * 100 + st.week).astype("int64")
+    st = st.sort_values(["team", "order"])
+    prev = [st.groupby("team").qb_id.shift(k) for k in (1, 2, 3)]
+    usual = []
+    for a, b, c in zip(*prev):
+        v = [x for x in (a, b, c) if isinstance(x, str)]
+        usual.append(max(v, key=v.count) if v else None)
+    st["usual"] = usual
+    st["qb_new"] = ((st.usual.notna()) & st.qb_id.notna() & (st.qb_id != st.usual)).astype(float)
+    # each QB's record after every game he played, then looked up as of the game before
+    q = df[(df.position == "QB") & df.dk_pts.notna()][["player_id", "season", "week", "pass_yds", "pass_att", "dk_pts"]].copy()
+    q["order"] = (q.season * 100 + q.week).astype("int64")
+    q = q.sort_values("order")
+    q["ypa"] = q.pass_yds / q.pass_att.replace(0, np.nan)
+    g = q.groupby("player_id", sort=False)
+    q["e_ypa"] = g.ypa.transform(lambda x: x.ewm(halflife=6, ignore_na=True).mean())
+    q["e_dk"] = g.dk_pts.transform(lambda x: x.ewm(halflife=6, ignore_na=True).mean())
+    q["n"] = g.cumcount() + 1
+    rec = q[["player_id", "order", "e_ypa", "e_dk", "n"]].astype({"player_id": str}).sort_values("order")
+
+    def asof(ids: pd.Series) -> pd.DataFrame:
+        ok = ids.notna().values
+        left = pd.DataFrame({"player_id": ids.astype(str).values, "order": st.order.values, "_i": np.arange(len(st))})
+        m = pd.merge_asof(left[ok].sort_values("order"), rec, on="order", by="player_id", allow_exact_matches=False)
+        return m.set_index("_i").reindex(np.arange(len(st)))
+    a, u = asof(st.qb_id), asof(st.usual)
+    st["qb_e_ypa"], st["qb_e_dk"], st["qb_starts"] = a.e_ypa.values, a.e_dk.values, a.n.fillna(0).values
+    st["qb_dk_drop"] = np.where(st.qb_new == 1, u.e_dk.values - a.e_dk.values, 0.0)
+    return st[cols]
+
+
 FEATURES = ["pos_code", "e_dk_pts", "e_dk_long", "dk_max8", "dk_sd8", "std_mean", "prev_season_mean", "n_prior",
             "e_pass_att", "e_pass_cmp", "e_pass_yds", "e_pass_td", "e_pass_int", "e_rush_att", "e_rush_yds", "e_tgt",
             "e_rec", "e_rec_yds", "e_rush_td", "e_rec_td", "e_tgt_share", "e_rush_share", "e_ypt", "e_ypc", "e_ypa",
             "e_adot", "e_any_td", "vac_tgt", "vac_rush", "spread", "total", "implied", "home", "e_t_pass_att",
             "e_t_rush_att", "e_t_pf", "e_t_dk", "e_ypa_allowed", "e_ypc_allowed", "e_pts_allowed", "dvp", "x_tgt",
-            "x_rush", "implied_ratio", "snap_last", "snap_e", "snap_last2", "snap_trend"]
+            "x_rush", "implied_ratio", "snap_last", "snap_e", "snap_last2", "snap_trend",
+            "qb_new", "qb_e_ypa", "qb_e_dk", "qb_starts", "qb_dk_drop", "is_starter"]
 
 
 # ------------------------------------------------------------------ play-by-play matchup features
