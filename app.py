@@ -1214,6 +1214,11 @@ with tab_evidence:
         st.markdown(f"**Sportsbook lines in the model** — {m_['verdict']}")
         st.dataframe(pd.DataFrame(m_["rows"]), hide_index=True)
         st.caption(m_["note"] + " For DK points the 'book line' column is the model with the lines folded in.")
+    sab = APP_ROOT / "evidence" / "snaps_ab_test.json"
+    if sab.exists():
+        m_ = json.loads(sab.read_text())
+        st.markdown(f"**Snap share as a model input** — {m_['verdict']}")
+        st.dataframe(pd.DataFrame(m_["rows"]), hide_index=True)
     iab = APP_ROOT / "evidence" / "injury_ab_test.json"
     if iab.exists():
         m_ = json.loads(iab.read_text())

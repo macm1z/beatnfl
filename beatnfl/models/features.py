@@ -33,6 +33,30 @@ def tidy_stats(stats: pd.DataFrame) -> pd.DataFrame:
         s[c] = s[c].fillna(0.0) if c in s else 0.0
     s["any_td"] = ((s.rush_td + s.rec_td) > 0).astype(float)
     s["played"] = 1
+    return attach_snaps(s)
+
+
+def attach_snaps(s: pd.DataFrame) -> pd.DataFrame:
+    """Share of the team's offensive snaps each player was on the field for (nflverse snap counts).
+    Missing data stays NaN — the model handles gaps. Tested 2022–2025: lower miss every season (Evidence)."""
+    s = s.copy()
+    s["snap_pct"] = np.nan
+    try:
+        from ..names import norm_name
+        from ..sources import nflverse as nv
+        seasons = sorted(set(s.season.dropna().astype(int)))
+        try:
+            sn = nv.snaps(seasons)
+        except Exception:  # noqa: BLE001
+            sn = nv.snaps(seasons, offline=True)
+        sn = sn[sn.game_type.eq("REG") | sn.game_type.isna()] if "game_type" in sn else sn
+        sn = sn.assign(nn=sn.player.map(norm_name)).drop_duplicates(["season", "week", "team", "nn"])
+        nn = s.name.map(norm_name)
+        m = s[["season", "week", "team"]].assign(nn=nn.values).merge(
+            sn[["season", "week", "team", "nn", "offense_pct"]], on=["season", "week", "team", "nn"], how="left")
+        s["snap_pct"] = m.offense_pct.values
+    except Exception:  # noqa: BLE001
+        pass
     return s
 
 
@@ -119,6 +143,15 @@ def build(rows: pd.DataFrame, tg: pd.DataFrame, tm: pd.DataFrame | None = None) 
     df["x_rush"] = df.e_rush_share * df.e_t_rush_att * (1 + 0.012 * df.spread.fillna(0)) * (1 + df.vac_rush.clip(0, 0.7) * 0.8)
     df["implied_ratio"] = df.implied / df.e_t_pf
     df["pos_code"] = df.position.map({"QB": 0, "RB": 1, "WR": 2, "TE": 3})
+    # ---- snap share, prior games only (this game's snaps are unknown at forecast time)
+    if "snap_pct" not in df:
+        df["snap_pct"] = np.nan
+    prev = df.groupby("player_id", sort=False).snap_pct.shift(1)
+    key = df.player_id
+    df["snap_last"] = prev
+    df["snap_e"] = prev.groupby(key, sort=False).ewm(halflife=3, ignore_na=True).mean().reset_index(level=0, drop=True).reindex(df.index)
+    df["snap_last2"] = prev.groupby(key, sort=False).rolling(2, min_periods=1).mean().reset_index(level=0, drop=True).reindex(df.index)
+    df["snap_trend"] = df.snap_last2 - df.snap_e
     if tm is not None and not tm.empty:
         df = add_team_metrics(df, tm)
     return df
@@ -165,7 +198,7 @@ FEATURES = ["pos_code", "e_dk_pts", "e_dk_long", "dk_max8", "dk_sd8", "std_mean"
             "e_rec", "e_rec_yds", "e_rush_td", "e_rec_td", "e_tgt_share", "e_rush_share", "e_ypt", "e_ypc", "e_ypa",
             "e_adot", "e_any_td", "vac_tgt", "vac_rush", "spread", "total", "implied", "home", "e_t_pass_att",
             "e_t_rush_att", "e_t_pf", "e_t_dk", "e_ypa_allowed", "e_ypc_allowed", "e_pts_allowed", "dvp", "x_tgt",
-            "x_rush", "implied_ratio"]
+            "x_rush", "implied_ratio", "snap_last", "snap_e", "snap_last2", "snap_trend"]
 
 
 # ------------------------------------------------------------------ play-by-play matchup features

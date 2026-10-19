@@ -84,10 +84,10 @@ Rules:
 - Cached data is always labeled stale.
 - DK export IDs from the JSON route stay "unverified" until checked against an official CSV in the inbox.
 
-## In-house model (pm-1.2)
+## In-house model (pm-1.3)
 
 Gradient-boosted forecasts of DK points and of each prop stat:
-- **Player inputs:** recent form (exponentially weighted), target and rush share, efficiency, and opportunity vacated by inactive teammates.
+- **Player inputs:** recent form (exponentially weighted), target and rush share, snap share (added in pm-1.3 — lower miss in all 12 seasons×stats tested), efficiency, and opportunity vacated by inactive teammates.
 - **Game inputs:** team pace, game line (implied total and spread), and opponent defense.
 
 DK points come from DraftKings scoring code, including yardage bonuses. Prop probabilities come from out-of-sample error distributions, recalibrated so they are not overconfident.

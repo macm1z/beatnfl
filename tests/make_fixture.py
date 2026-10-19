@@ -24,14 +24,37 @@ NICK = {"ARI": "Cardinals", "ATL": "Falcons", "BAL": "Ravens", "BUF": "Bills", "
 RANGE = {"QB": (4800, 8200), "RB": (4000, 9200), "WR": (3000, 9200), "TE": (2500, 7500), "DST": (2200, 3800)}
 
 
-def main(out: Path):
-    st = nv.weekly_stats([2026])
-    st = st[(st.week <= 5) & st.position.isin(["QB", "RB", "WR", "TE"])]
+NAMES = dict(NICK)
+NAMES.update({"DAL": "Cowboys", "DEN": "Broncos", "DET": "Lions", "GB": "Packers", "HOU": "Texans", "JAX": "Jaguars",
+              "MIA": "Dolphins", "MIN": "Vikings", "NYG": "Giants", "SEA": "Seahawks", "SF": "49ers", "WAS": "Commanders",
+              "CIN": "Bengals"})
+
+
+def week_games(season: int, week: int, n: int = 10):
+    """Up to n Sunday games of that week from the real schedule: [(away, home, 'MM/DD/YYYY', 'HH:MMAM')]."""
+    s = nv.schedules()
+    g = s[(s.season == season) & (s.week == week) & (s.game_type == "REG")].copy()
+    g = g[pd.to_datetime(g.gameday).dt.weekday == 6].sort_values(["gametime", "game_id"]).head(n)
+    out = []
+    for r in g.itertuples():
+        hh, mm = (int(x) for x in str(r.gametime).split(":"))
+        t = f"{(hh - 1) % 12 + 1:02d}:{mm:02d}{'PM' if hh >= 12 else 'AM'}"
+        out.append((r.away_team, r.home_team, pd.Timestamp(r.gameday).strftime("%m/%d/%Y"), t))
+    return out
+
+
+def main(out: Path, season: int = 2026, week: int = 6):
+    games = week_games(season, week)
+    st = nv.weekly_stats(range(season - 1, season + 1))
+    st = st[((st.season < season) | (st.week < week)) & st.position.isin(["QB", "RB", "WR", "TE"])]
+    st = st[st.season == st.season.max()] if (st.season == season).sum() > 500 else st
     ppg = st.groupby(["player_id", "player_display_name", "position", "team"]).agg(ppg=("dk_pts", "mean"), g=("dk_pts", "size")).reset_index()
     last_team = st.sort_values("week").drop_duplicates("player_id", keep="last")[["player_id", "team"]]
     ppg = ppg.merge(last_team, on=["player_id", "team"])
     rows, pid = [], 40100000
-    for a, h in GAMES:
+    when = {}
+    for a, h, day, tm in games:
+        when[(a, h)] = (day, tm)
         for t in (a, h):
             d = ppg[ppg.team == t]
             for p, n in {"QB": 2, "RB": 5, "WR": 7, "TE": 4}.items():
@@ -41,11 +64,12 @@ def main(out: Path):
                     pid += 1
                     rows.append((p, r.player_display_name, pid, f"{p}/FLEX" if p != "QB" else "QB", sal, a, h, t, round(r.ppg, 2)))
             pid += 1
-            rows.append(("DST", f"{NICK[t]} ", pid, "DST", int(np.random.default_rng(pid).integers(22, 38)) * 100, a, h, t, 7.0))
+            rows.append(("DST", f"{NAMES.get(t, t)} ", pid, "DST", int(np.random.default_rng(pid).integers(22, 38)) * 100, a, h, t, 7.0))
     lines = ["Position,Name + ID,Name,ID,Roster Position,Salary,Game Info,TeamAbbrev,AvgPointsPerGame"]
     for p, name, i, rp, sal, a, h, t, avg in rows:
         da, dh, dt = DK_TEAM.get(a, a), DK_TEAM.get(h, h), DK_TEAM.get(t, t)
-        gi = f"{da}@{dh} 10/18/2026 {TIMES.get((a, h), '01:00PM')} ET"
+        day, tm = when[(a, h)]
+        gi = f"{da}@{dh} {day} {tm} ET"
         nm = f'"{name}"' if "," in name else name
         lines.append(f'{p},{nm} ({i}),{nm},{i},{rp},{sal},{gi},{dt},{avg}')
     out.write_text("﻿" + "\r\n".join(lines) + "\r\n\r\n")  # BOM + CRLF + trailing blank line on purpose
@@ -53,4 +77,5 @@ def main(out: Path):
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent / "fixtures" / "DKSalaries_FIXTURE_2026wk6.csv")
+    main(Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent / "fixtures" / "DKSalaries_FIXTURE_2026wk6.csv",
+         *(int(x) for x in sys.argv[2:4]))

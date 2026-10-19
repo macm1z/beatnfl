@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import pickle
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -69,7 +69,8 @@ def season_model(season: int, offline=False, progress=lambda m: None) -> tuple[P
     sched = nv.schedules(offline=offline)
     tg = nv.team_games(sched)
     feat = F.build(F.tidy_stats(stats), tg)
-    path = BT_DIR / f"model_{season}_{PlayerModel().__class__.__name__}.pkl"
+    from .models.players import MODEL_VERSION
+    path = BT_DIR / f"model_{season}_{MODEL_VERSION}.pkl"
     if path.exists():
         pm = pickle.loads(path.read_bytes())
     else:

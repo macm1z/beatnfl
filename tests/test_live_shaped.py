@@ -18,10 +18,31 @@ FIX = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture(scope="module")
-def payloads():
+def payloads(tmp_path_factory):
+    """Stand-ins for the current NFL week, so these tests keep working as the season moves on."""
     import live_shaped
+    import make_fixture
     from beatnfl.sources import nflverse as nv
-    return live_shaped.build(nv.weekly_stats([2026]), nv.schedules(), FIX / "DKSalaries_FIXTURE_2026wk6.csv")
+    import pandas as pd
+    sched = nv.schedules()
+    reg = sched[sched.game_type == "REG"].copy()
+    reg["kick"] = pd.to_datetime(reg.gameday.astype(str) + " " + reg.gametime.astype(str)).dt.tz_localize("America/New_York")
+    sun = reg[pd.to_datetime(reg.gameday).dt.weekday == 6]
+    # the next week whose Sunday games are all still in the future (a slate that hasn't started)
+    fut = sun.groupby(["season", "week"]).kick.min()
+    fut = fut[fut > pd.Timestamp.now(tz="America/New_York") + pd.Timedelta(hours=1)]
+    if fut.empty:
+        pytest.skip("no upcoming regular-season week to test against")
+    season, week = (int(x) for x in fut.index[0])
+    csv = tmp_path_factory.mktemp("slate") / f"DKSalaries_FIXTURE_{season}wk{week}.csv"
+    make_fixture.main(csv, season, week)
+    p = live_shaped.build(nv.weekly_stats(range(season - 1, season + 1)), sched, csv, season, week)
+    p["_n_games"] = int(len(sched[(sched.season == season) & (sched.week == week) & (sched.game_type == "REG")]))
+    sal = pd.read_csv(csv, encoding="utf-8-sig")
+    two = pd.concat([sal[sal.Position == "QB"].head(1), sal[sal.Position == "WR"].head(1)])
+    p["_paste"] = "Player\tTeam\tPos\tProj\n" + "".join(f"{r.Name.strip()}\t{r.TeamAbbrev}\t{r.Position}\t{20 + i}\n"
+                                                         for i, r in enumerate(two.itertuples()))
+    return p
 
 
 @pytest.fixture
@@ -92,20 +113,21 @@ def test_research_all_sources(live):
     pm, dm, meta = train.get_models()
     spp, _ = sleeper.players()
     lines = odds.consensus(odds.game_lines("k"))
-    fc, warns = train.forecast_week(2026, 6, spp, pm, lines)
+    fc, warns = train.forecast_week(live['_season'], live['_week'], spp, pm, lines)
     assert len(fc) > 250 and fc.p_dk_pts.notna().all()
     raw = odds.game_lines("k")
-    g = research.games_table(2026, 6, raw)
-    assert len(g) >= 13 and (g._src == "odds_api").sum() >= 13
-    gp = research.game_probs(2026, 6, raw)
+    S, W = live["_season"], live["_week"]
+    g = research.games_table(S, W, raw)
+    assert len(g) == live["_n_games"] and (g._src == "odds_api").sum() >= len(g) - 1
+    gp = research.game_probs(S, W, raw)
     assert set(gp["Bet type"]) == {"Spread", "Moneyline", "Total"} and gp["Market %"].between(1, 99).all()
-    board, info = research.props_board("k", 2026, 6, fc, pm, research.CORE_PROP_MARKETS)
+    board, info = research.props_board("k", S, W, fc, pm, research.CORE_PROP_MARKETS)
     assert len(board) >= 5 and board.model_p_over.notna().sum() >= 4
-    m = research.matchups(2026, 6)
-    assert len(m) == 28
+    m = research.matchups(S, W)
+    assert len(m) == 2 * live["_n_games"]
     # FantasyPros stat lines mix into props forecasts
     from beatnfl.sources import fantasypros
-    fpdf, _ = fantasypros.projections("fp-key", 2026, 6)
+    fpdf, _ = fantasypros.projections("fp-key", S, W)
     fc2, n = research.blend_fp_stats(fc, fpdf, {"rec_yds": 0.4, "rush_yds": 0.3})
     assert n > 50 and (fc2.p_rec_yds != fc.p_rec_yds).sum() > 20
 
@@ -114,9 +136,10 @@ def test_midweek_picks_end_to_end(live):
     from beatnfl import research, storage
     from beatnfl.config import Settings
     s = Settings(odds_api_key="k", fantasypros_api_key="fp-key")
-    picks, info = research.build_midweek(s, 2026, 6)
-    assert info["season"] == 2026 and info["week"] == 6 and "FantasyPros" in info["fp_note"]
-    loose, _ = research.build_midweek(Settings(odds_api_key="k"), 2026, 6)          # model-only list is a superset
+    S, W = live["_season"], live["_week"]
+    picks, info = research.build_midweek(s, S, W)
+    assert info["season"] == S and info["week"] == W and "FantasyPros" in info["fp_note"]
+    loose, _ = research.build_midweek(Settings(odds_api_key="k"), S, W)          # model-only list is a superset
     assert len(loose) >= len(picks) and (loose.empty or (loose.side == "Under").all())
     assert len(storage.picks()) >= len(loose)
     tbl, sm = research.grade_picks()
@@ -126,7 +149,7 @@ def test_midweek_picks_end_to_end(live):
 def test_source_compare_end_to_end(live):
     """FantasyPros vs Sleeper vs model on completed 2026 weeks (stand-in FantasyPros/Sleeper numbers)."""
     from beatnfl import backtest
-    out = backtest.source_compare("fp-key", seasons=(2026,), current_weights={"paid": .5, "sleeper": .25, "model": .25},
+    out = backtest.source_compare("fp-key", seasons=(live["_season"],), current_weights={"paid": .5, "sleeper": .25, "model": .25},
                                   progress=lambda m: None)
     assert out["n"] > 500 and out["weeks_fantasypros"] >= 3
     assert {r["pos"] for r in out["by_pos"]} >= {"QB", "RB", "WR", "TE"}
@@ -163,7 +186,7 @@ def test_app_every_button(live, monkeypatch):
     labels = ["⟳ Refresh", "⚙ Build lineups", "💾 Save", "Load roster & projections", "Load matchups",
               "Forecast every player this week", "Load props", "Grade frozen forecasts", "Grade live weights", "Copy diagnostics", "Check for updates",
               "🔎 Find this week's picks", "Grade picks", "Record closing prices now", "Use these weights", "⟳ Refresh"]
-    at.text_area(key="pasted_proj").input("Player\tTeam\tPos\tProj\nJosh Allen\tBUF\tQB\t24.9\nPuka Nacua\tLAR\tWR\t21.0\n")
+    at.text_area(key="pasted_proj").input(live["_paste"])
     for lab in labels:
         btn = [b for b in at.button if b.label == lab]
         assert btn, f"button missing: {lab}"

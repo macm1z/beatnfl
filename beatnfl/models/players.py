@@ -17,7 +17,7 @@ from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostin
 
 from .features import FEATURES, PBP_FEATURES
 
-MODEL_VERSION = "pm-1.2"
+MODEL_VERSION = "pm-1.3"   # 1.3: snap-share features
 
 # target -> positions trained on
 TARGETS = {

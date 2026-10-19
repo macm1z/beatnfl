@@ -1,0 +1,89 @@
+{
+ "verdict": "Snap share (prior games only) lowered the average miss in all 12 tests (3 stats \u00d7 2022\u20132025); added to the model as pm-1.3.",
+ "rows": [
+  {
+   "Stat": "DK points",
+   "Season": 2022,
+   "Miss: before": 4.726,
+   "Miss: with snap share": 4.678,
+   "Change": -0.048
+  },
+  {
+   "Stat": "DK points",
+   "Season": 2023,
+   "Miss: before": 4.577,
+   "Miss: with snap share": 4.536,
+   "Change": -0.041
+  },
+  {
+   "Stat": "DK points",
+   "Season": 2024,
+   "Miss: before": 4.659,
+   "Miss: with snap share": 4.617,
+   "Change": -0.042
+  },
+  {
+   "Stat": "DK points",
+   "Season": 2025,
+   "Miss: before": 4.51,
+   "Miss: with snap share": 4.498,
+   "Change": -0.012
+  },
+  {
+   "Stat": "Receiving yds",
+   "Season": 2022,
+   "Miss: before": 16.891,
+   "Miss: with snap share": 16.718,
+   "Change": -0.174
+  },
+  {
+   "Stat": "Receiving yds",
+   "Season": 2023,
+   "Miss: before": 16.665,
+   "Miss: with snap share": 16.466,
+   "Change": -0.198
+  },
+  {
+   "Stat": "Receiving yds",
+   "Season": 2024,
+   "Miss: before": 16.379,
+   "Miss: with snap share": 16.271,
+   "Change": -0.108
+  },
+  {
+   "Stat": "Receiving yds",
+   "Season": 2025,
+   "Miss: before": 15.783,
+   "Miss: with snap share": 15.704,
+   "Change": -0.078
+  },
+  {
+   "Stat": "Rushing yds",
+   "Season": 2022,
+   "Miss: before": 9.543,
+   "Miss: with snap share": 9.411,
+   "Change": -0.132
+  },
+  {
+   "Stat": "Rushing yds",
+   "Season": 2023,
+   "Miss: before": 8.695,
+   "Miss: with snap share": 8.68,
+   "Change": -0.015
+  },
+  {
+   "Stat": "Rushing yds",
+   "Season": 2024,
+   "Miss: before": 9.1,
+   "Miss: with snap share": 9.023,
+   "Change": -0.077
+  },
+  {
+   "Stat": "Rushing yds",
+   "Season": 2025,
+   "Miss: before": 8.733,
+   "Miss: with snap share": 8.651,
+   "Change": -0.082
+  }
+ ]
+}

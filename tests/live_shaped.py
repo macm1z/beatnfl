@@ -21,12 +21,23 @@ ODDS_NAME = {"ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Balti
              "SEA": "Seattle Seahawks", "DEN": "Denver Broncos", "HOU": "Houston Texans", "JAX": "Jacksonville Jaguars",
              "DAL": "Dallas Cowboys", "GB": "Green Bay Packers", "WAS": "Washington Commanders", "SF": "San Francisco 49ers",
              "MIN": "Minnesota Vikings", "DET": "Detroit Lions", "MIA": "Miami Dolphins", "CIN": "Cincinnati Bengals"}
+FULL_TO_ABBR = {v: k for k, v in ODDS_NAME.items()}
 
 
-def build(stats: pd.DataFrame, sched: pd.DataFrame, slate_csv: Path) -> dict:
-    """Return {url_fragment: payload} for every endpoint the app calls."""
+def _utc(day: str, hhmm: str) -> pd.Timestamp:
+    """'10/18/2026', '04:25PM' (Eastern) → UTC timestamp."""
+    return pd.Timestamp(f"{day} {hhmm}").tz_localize("America/New_York").tz_convert("UTC")
+
+
+def _iso(ts: pd.Timestamp) -> str:
+    return ts.strftime("%Y-%m-%dT%H:%M:%S.0000000Z")
+
+
+def build(stats: pd.DataFrame, sched: pd.DataFrame, slate_csv: Path, season: int = 2026, week: int = 6) -> dict:
+    """Return {url_fragment: payload} for every endpoint the app calls, for the given (upcoming) week."""
     rng = np.random.default_rng(6)
-    st = stats[(stats.season == 2026) & stats.position.isin(["QB", "RB", "WR", "TE"])]
+    stats = stats[(stats.season < season) | (stats.week < week)]
+    st = stats[(stats.season == stats.season.max()) & stats.position.isin(["QB", "RB", "WR", "TE"])]
     last = st.sort_values("week").drop_duplicates("player_id", keep="last")
     avg = st.groupby("player_id")[["passing_yards", "passing_tds", "attempts", "completions", "rushing_yards",
                                    "carries", "rushing_tds", "receptions", "receiving_yards", "targets",
@@ -46,7 +57,7 @@ def build(stats: pd.DataFrame, sched: pd.DataFrame, slate_csv: Path) -> dict:
                         "depth_chart_position": r.position, "depth_chart_order": 1 + i % 3, "active": True,
                         "news_updated": 1792000000000 + i}
         a = avg.loc[r.player_id]
-        projections.append({"player_id": sid, "team": team, "opponent": None, "week": 6, "season": "2026",
+        projections.append({"player_id": sid, "team": team, "opponent": None, "week": week, "season": str(season),
                             "player": {"first_name": first, "last_name": lastn, "position": r.position, "team": team},
                             "stats": {"pass_yd": a.passing_yards, "pass_td": a.passing_tds, "pass_att": a.attempts,
                                       "pass_cmp": a.completions, "pass_int": a.passing_interceptions,
@@ -56,7 +67,7 @@ def build(stats: pd.DataFrame, sched: pd.DataFrame, slate_csv: Path) -> dict:
     for j in range(11000):  # real feed lists ~11k players incl. retired/practice squad — pad to that size
         players[f"x{j}"] = {"player_id": f"x{j}", "full_name": f"Inactive Player {j}", "position": ["OL", "LB", "CB", "K"][j % 4],
                             "team": None, "gsis_id": None, "injury_status": None, "status": "Inactive", "active": False}
-    for t in sorted(set(sched[(sched.season == 2026)].home_team)):
+    for t in sorted(set(sched[(sched.season == season)].home_team)):
         tt = SLEEPER_TEAM.get(t, t)
         players[tt] = {"player_id": tt, "full_name": None, "first_name": t, "last_name": "Defense", "position": "DEF",
                        "team": tt, "gsis_id": None, "injury_status": None, "status": "Active", "active": True}
@@ -73,9 +84,7 @@ def build(stats: pd.DataFrame, sched: pd.DataFrame, slate_csv: Path) -> dict:
         game = gi[0]
         if game not in comps:
             a, h = game.split("@")
-            hh, mm = gi[2][:5].split(":")
-            hr = (int(hh) % 12) + (12 if gi[2].endswith("PM") else 0)
-            comps[game] = {"competitionId": comp_id, "name": f"{a} @ {h}", "startTime": f"2026-10-18T{hr + 4:02d}:{mm}:00.0000000Z"}
+            comps[game] = {"competitionId": comp_id, "name": f"{a} @ {h}", "startTime": _iso(_utc(gi[1], gi[2]))}
             comp_id += 1
         status = ["None", "None", "None", "Q", "None", "O", "None", "None", "None", "None", "None", "D"][int(r.ID) % 12]
         d = {"draftableId": int(r.ID), "playerId": int(r.ID) + 9_000_000, "displayName": r.Name.strip(),
@@ -85,20 +94,23 @@ def build(stats: pd.DataFrame, sched: pd.DataFrame, slate_csv: Path) -> dict:
         draftables.append(d)
         if r.Position != "QB" and r.Position != "DST":
             draftables.append({**d, "rosterSlotId": 71})  # FLEX listing, same ID
+    first = min(pd.Timestamp(c["startTime"]) for c in comps.values())
     lobby = {"Contests": [], "DraftGroups": [
-        {"DraftGroupId": 135000, "ContestTypeId": 21, "StartDate": "2026-10-18T17:00:00.0000000Z", "DraftGroupTag": "Featured",
+        {"DraftGroupId": 135000, "ContestTypeId": 21, "StartDate": _iso(first), "DraftGroupTag": "Featured",
          "GameType": "Classic", "GameCount": len(comps), "ContestStartTimeSuffix": None},
-        {"DraftGroupId": 135001, "ContestTypeId": 21, "StartDate": "2026-10-18T20:05:00.0000000Z", "DraftGroupTag": "",
+        {"DraftGroupId": 135001, "ContestTypeId": 21, "StartDate": _iso(first + pd.Timedelta(hours=3, minutes=5)), "DraftGroupTag": "",
          "GameType": "Classic", "GameCount": 3, "ContestStartTimeSuffix": " (Afternoon Turbo)"}]}
 
-    # The Odds API: week 6 lines + one game's props
-    wk = sched[(sched.season == 2026) & (sched.week == 6)]
+    # The Odds API: this week's lines + one game's props
+    wk = sched[(sched.season == season) & (sched.week == week)]
     events, odds = [], []
     for i, g in enumerate(wk.itertuples()):
-        ev = {"id": f"ev{i}", "sport_key": "americanfootball_nfl", "commence_time": f"{g.gameday}T17:00:00Z",
+        kick = pd.Timestamp(f"{g.gameday} {g.gametime}").tz_localize("America/New_York").tz_convert("UTC")
+        ev = {"id": f"ev{i}", "sport_key": "americanfootball_nfl", "commence_time": kick.strftime("%Y-%m-%dT%H:%M:%SZ"),
               "home_team": ODDS_NAME[g.home_team], "away_team": ODDS_NAME[g.away_team]}
         events.append(ev)
-        sp = -(g.spread_line or 0) + rng.choice([-0.5, 0, 0.5])
+        sp = -(g.spread_line if pd.notna(g.spread_line) else 0) + rng.choice([-0.5, 0, 0.5])
+        tot = g.total_line if pd.notna(g.total_line) else 44.5
         books = []
         for bk in ("draftkings", "fanduel"):
             books.append({"key": bk, "title": bk, "last_update": "2026-10-12T21:00:00Z", "markets": [
@@ -106,21 +118,28 @@ def build(stats: pd.DataFrame, sched: pd.DataFrame, slate_csv: Path) -> dict:
                     {"name": ODDS_NAME[g.home_team], "price": -110, "point": sp},
                     {"name": ODDS_NAME[g.away_team], "price": -110, "point": -sp}]},
                 {"key": "totals", "last_update": "2026-10-12T21:00:00Z", "outcomes": [
-                    {"name": "Over", "price": -110, "point": g.total_line}, {"name": "Under", "price": -110, "point": g.total_line}]},
+                    {"name": "Over", "price": -110, "point": tot}, {"name": "Under", "price": -110, "point": tot}]},
                 {"key": "h2h", "last_update": "2026-10-12T21:00:00Z", "outcomes": [
                     {"name": ODDS_NAME[g.home_team], "price": -150}, {"name": ODDS_NAME[g.away_team], "price": 130}]}]})
         odds.append({**ev, "bookmakers": books})
-    # props for the CHI @ ATL game using real names
-    g0 = next(e for e in events if e["home_team"] == "Atlanta Falcons")
+    # props for one slate game, using the real top players of its two teams
+    slate_teams = set(sal.TeamAbbrev.replace({"LAR": "LA"}))
+    g0 = next(e for e in events if FULL_TO_ABBR.get(e["home_team"]) in slate_teams)
+    tms = {FULL_TO_ABBR[g0["home_team"]], FULL_TO_ABBR[g0["away_team"]]}
+    recent = st[st.team.isin(tms)].groupby(["player_display_name", "position"]).agg(
+        rec=("receiving_yards", "mean"), rush=("rushing_yards", "mean"), pas=("passing_yards", "mean"), n=("week", "size")).reset_index()
+    recent = recent[recent.n >= 2]
+    wr = recent.sort_values("rec", ascending=False).iloc[0].player_display_name
+    rb = recent[recent.position == "RB"].sort_values("rush", ascending=False).iloc[0].player_display_name
+    qbs = list(recent[recent.position == "QB"].sort_values("pas", ascending=False).player_display_name.head(2))
     pr = []
-    for name, mkt, line in (("Drake London", "player_reception_yds", 74.5), ("Drake London", "player_receptions", 5.5),
-                            ("Bijan Robinson", "player_rush_yds", 81.5), ("Caleb Williams", "player_pass_yds", 238.5),
-                            ("Michael Penix Jr.", "player_pass_yds", 224.5)):
+    for name, mkt, line in ([(wr, "player_reception_yds", 74.5), (wr, "player_receptions", 5.5), (rb, "player_rush_yds", 81.5)]
+                            + [(q, "player_pass_yds", 230.5) for q in qbs]):
         pr.append({"key": mkt, "last_update": "2026-10-12T21:00:00Z", "outcomes": [
             {"name": "Over", "description": name, "price": -115, "point": line},
             {"name": "Under", "description": name, "price": -105, "point": line}]})
     pr.append({"key": "player_anytime_td", "last_update": "2026-10-12T21:00:00Z",
-               "outcomes": [{"name": "Yes", "description": "Bijan Robinson", "price": -150}]})
+               "outcomes": [{"name": "Yes", "description": rb, "price": -150}]})
     props = {**g0, "bookmakers": [{"key": "draftkings", "title": "DraftKings", "markets": pr},
                                   {"key": "williamhill_us", "title": "Caesars", "markets": pr},
                                   {"key": "fanatics", "title": "Fanatics", "markets": [m for m in pr if m["key"] == "player_anytime_td"]}]}
@@ -143,11 +162,12 @@ def build(stats: pd.DataFrame, sched: pd.DataFrame, slate_csv: Path) -> dict:
                 st = {"points": a * .8, "points_ppr": a, "rush_yds": a * (3 if pos == "RB" else .2), "rush_tds": .02 * a,
                       "rec_rec": a / 4, "rec_yds": a * 3.5, "rec_tds": .02 * a, "fumbles": 0.05}
             rows.append({"fpid": 1000, "name": getattr(r, "Name"), "position_id": pos, "team_id": team, "stats": st})
-        fp[pos] = {"season": "2026", "week": "6", "count": str(len(rows)), "positions": pos, "scoring": "STD",
+        fp[pos] = {"season": str(season), "week": str(week), "count": str(len(rows)), "positions": pos, "scoring": "STD",
                    "players": rows, "public_api_limited": True, "tier": "premium"}
     return {"fp": fp, "players": players, "projections": projections, "lobby": lobby,
             "draftables": {"draftables": draftables, "competitions": list(comps.values())},
-            "state": {"season": "2026", "week": 6, "season_type": "regular", "display_week": 6},
+            "state": {"season": str(season), "week": week, "season_type": "regular", "display_week": week},
+            "_season": season, "_week": week, "_prop_players": [wr, rb] + qbs,
             "events": events, "odds": odds, "props": props, "props_event": g0["id"]}
 
 
