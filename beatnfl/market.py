@@ -100,5 +100,8 @@ def adjust(res: pd.DataFrame, lines: pd.DataFrame) -> pd.DataFrame:
         used |= ok
     r.loc[used, "proj_lines_adj"] = adj[used].round(2)
     r.loc[used, "proj_model"] = (r.loc[used, "proj_model"] + adj[used]).clip(lower=0).round(2)
+    for c in ("p_dk_floor", "p_dk_ceiling"):      # the range moves with the projection
+        if c in r:
+            r.loc[used, c] = (r.loc[used, c] + adj[used]).clip(lower=0)
     return r.drop(columns=[c for c in r.columns if c.startswith("line_") or c == "p_td"])
 

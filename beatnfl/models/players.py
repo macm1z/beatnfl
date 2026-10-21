@@ -17,7 +17,7 @@ from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostin
 
 from .features import FEATURES, PBP_FEATURES
 
-MODEL_VERSION = "pm-1.4"   # 1.3: snap share · 1.4: starting-QB context
+MODEL_VERSION = "pm-1.5"   # 1.3: snap share · 1.4: starting-QB context · 1.5: floor/ceiling
 
 # target -> positions trained on
 TARGETS = {
@@ -27,6 +27,7 @@ TARGETS = {
     "rec": ["RB", "WR", "TE"], "rec_yds": ["RB", "WR", "TE"],
 }
 CLASS_TARGETS = {"any_td": ["QB", "RB", "WR", "TE"]}
+QUANTILES = (0.15, 0.85)
 GBM = dict(max_iter=350, learning_rate=0.04, max_leaf_nodes=24, min_samples_leaf=60, l2_regularization=1.0,
            early_stopping=False, random_state=7)
 
@@ -57,6 +58,11 @@ class PlayerModel:
         for t, poss in CLASS_TARGETS.items():
             d = f[f.position.isin(poss) & f[t].notna()]
             self.clfs[t] = HistGradientBoostingClassifier(**GBM).fit(d[FEATURES_], d[t].astype(int))
+        # player-specific floor / ceiling for DK points (15th / 85th percentile). Tested 2025: better-calibrated
+        # ceilings than the shared error spread (90th pct hit 10.2% vs 9.3%; target 10%) — see Evidence.
+        d = f[f.position.isin(TARGETS["dk_pts"]) & f.dk_pts.notna()]
+        self.qregs = {q: HistGradientBoostingRegressor(loss="quantile", quantile=q, **GBM).fit(d[FEATURES_], d.dk_pts)
+                      for q in QUANTILES}
         last = f.sort_values(["season", "week"]).iloc[-1]
         self.trained_through = f"{int(last.season)} wk {int(last.week)}"
         return self
@@ -73,6 +79,15 @@ class PlayerModel:
             out[f"p_{t}"] = np.nan
             if m.any():
                 out.loc[m, f"p_{t}"] = self.clfs[t].predict_proba(feat.loc[m, self._cols(feat)])[:, 1]
+        qregs = getattr(self, "qregs", None) or {}
+        m = feat.position.isin(TARGETS["dk_pts"])
+        for q, name in ((0.15, "p_dk_floor"), (0.85, "p_dk_ceiling")):
+            out[name] = np.nan
+            if q in qregs and m.any():
+                out.loc[m, name] = np.clip(qregs[q].predict(feat.loc[m, self._cols(feat)]), 0, None)
+        if {"p_dk_floor", "p_dk_ceiling"} <= set(out) and "p_dk_pts" in out:   # keep floor ≤ projection ≤ ceiling
+            out["p_dk_floor"] = np.minimum(out.p_dk_floor, out.p_dk_pts)
+            out["p_dk_ceiling"] = np.maximum(out.p_dk_ceiling, out.p_dk_pts)
         return out
 
     def _cols(self, feat: pd.DataFrame) -> list:

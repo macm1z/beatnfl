@@ -320,7 +320,8 @@ with tab_week:
                           zip(pool.get("status", ""), pool.get("injury_note", pd.Series("", index=pool.index)))]
         names = {"dk_id": "dk_id", "name": "Player", "pos": "Pos", "team": "Team", "opp": "Opp", "salary": "Salary",
                  "injury": "Injury", "proj": "Combined", "value": "Pts/$1K", "proj_paid": "Yours",
-                 "proj_sleeper": "Sleeper", "proj_model": "Model", "proj_lines_adj": "Book lines",
+                 "proj_sleeper": "Sleeper", "proj_model": "Model", "p_dk_floor": "Floor", "p_dk_ceiling": "Ceiling",
+                 "proj_lines_adj": "Book lines",
                  "pct_rostered_yahoo": "Yahoo %"}
         w = (f"Yours {S.w_paid:.0%} · Sleeper {S.w_sleeper:.0%} · Model {S.w_model:.0%}" if not S.pos_weights else
              "tested per position: " + "; ".join(f"{ps} " + " ".join(
@@ -339,12 +340,15 @@ with tab_week:
                      "recent usage (snaps, targets, carries, weighted toward recent games), touches freed by injured "
                      "teammates, team pass/run volume, the opponent's points allowed to the position, and the "
                      "betting-implied team total. Accuracy: Evidence tab.",
+            "Floor": "A bad-day score for this player (the model's 15th percentile): about 1 game in 7 goes lower.",
+            "Ceiling": "A big-day score for this player (the model's 85th percentile): about 1 game in 7 goes higher. "
+                       "Each player gets his own range — boom-or-bust players have a wider one. Useful for tournaments.",
             "Book lines": "Points the sportsbooks' prop lines moved the Model number (already included in Model). "
                           "In the 2025 test, folding the lines in cut the model's average miss on unseen weeks.",
             "Injury": "Worst of DraftKings, Sleeper and Yahoo. Out / Doubtful / IR players are left out of lineups.",
             "Yahoo %": "Share of Yahoo leagues rostering the player.",
         }
-        view, cfg = tidy(pool, names, one=("Combined", "Yours", "Sleeper", "Model", "Book lines"), two=("Pts/$1K",), money=("Salary",),
+        view, cfg = tidy(pool, names, one=("Combined", "Yours", "Sleeper", "Model", "Floor", "Ceiling", "Book lines"), two=("Pts/$1K",), money=("Salary",),
                          ints=("Yahoo %",), helps=helps)
         view.insert(1, "Lock", view.dk_id.isin(ss.get("locks", [])))
         view.insert(2, "Exclude", view.dk_id.isin(ss.get("excludes", [])))
@@ -1214,6 +1218,11 @@ with tab_evidence:
         st.markdown(f"**Sportsbook lines in the model** — {m_['verdict']}")
         st.dataframe(pd.DataFrame(m_["rows"]), hide_index=True)
         st.caption(m_["note"] + " For DK points the 'book line' column is the model with the lines folded in.")
+    rgt = APP_ROOT / "evidence" / "ranges_test.json"
+    if rgt.exists():
+        m_ = json.loads(rgt.read_text())
+        st.markdown(f"**Floor / ceiling ranges** — {m_['verdict']}")
+        st.dataframe(pd.DataFrame(m_["rows"]).astype(str), hide_index=True)
     qab = APP_ROOT / "evidence" / "qb_weather_ab_test.json"
     if qab.exists():
         m_ = json.loads(qab.read_text())

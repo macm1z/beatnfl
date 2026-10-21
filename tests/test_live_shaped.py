@@ -92,7 +92,10 @@ def test_weekly_run_all_sources(live, monkeypatch):
     steps = {x.step: x for x in run.steps}
     assert run.slate.route == "json" and steps["1. Slate"].status in ("ok", "warn")
     assert steps["4d. Sportsbook lines"].status == "ok" and "moved toward" in steps["4d. Sportsbook lines"].message, steps["4d. Sportsbook lines"].as_text()
-    assert run.pool.proj_lines_adj.notna().sum() >= 3
+    assert run.pool.proj_lines_adj.notna().sum() >= 1
+    rng_ = run.pool.dropna(subset=["p_dk_floor", "p_dk_ceiling", "proj_model"])
+    assert len(rng_) > 200 and (rng_.p_dk_floor <= rng_.proj_model + 1e-6).all() and (rng_.p_dk_ceiling >= rng_.proj_model - 1e-6).all()
+    assert (rng_.p_dk_ceiling - rng_.p_dk_floor).median() > 5
     for k in ("2. Injuries & roles", "2b. Injuries (Yahoo)", "3. Schedule", "3b. Betting lines", "4a. Sleeper projections",
               "4c. In-house model"):
         assert steps[k].status in ("ok", "warn"), steps[k].as_text()

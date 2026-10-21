@@ -84,11 +84,13 @@ Rules:
 - Cached data is always labeled stale.
 - DK export IDs from the JSON route stay "unverified" until checked against an official CSV in the inbox.
 
-## In-house model (pm-1.4)
+## In-house model (pm-1.5)
 
 Gradient-boosted forecasts of DK points and of each prop stat:
 - **Player inputs:** recent form (exponentially weighted), target and rush share, snap share (pm-1.3), the starting QB — who's listed to start, whether it's a change, and his record (pm-1.4; expected starter from Sleeper's depth chart before games) — efficiency, and opportunity vacated by inactive teammates.
 - **Game inputs:** team pace, game line (implied total and spread), and opponent defense.
+
+Each player also gets his own **Floor** and **Ceiling** (15th/85th percentile, pm-1.5) — boom-or-bust players get wider ranges.
 
 DK points come from DraftKings scoring code, including yardage bonuses. Prop probabilities come from out-of-sample error distributions, recalibrated so they are not overconfident.
 

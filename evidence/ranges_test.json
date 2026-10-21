@@ -1,0 +1,30 @@
+{
+ "verdict": "Player-specific outcome ranges (quantile models) were tested on 2025 with the model trained on earlier seasons. DK points: slightly better overall (pinball loss 1.594 \u2192 1.582) and better-calibrated ceilings, so Floor/Ceiling (15th/85th percentile) are now shown. Props: the ranges carried some information beyond the books' prices in-sample (z = 2.2), but combining them with the market did not beat the market on unseen weeks (Brier 0.2496 \u2192 0.2499; picks lost money; lines didn't move toward them) \u2014 no props edge.",
+ "rows": [
+  {
+   "Test": "DK points \u2014 pinball loss (lower is better)",
+   "Before": 1.594,
+   "Player-specific ranges": 1.582
+  },
+  {
+   "Test": "DK points \u2014 90th-pct ceiling hit rate (target 10%)",
+   "Before": "9.3%",
+   "Player-specific ranges": "10.2%"
+  },
+  {
+   "Test": "DK points \u2014 15\u201385% range covers (target 70%)",
+   "Before": "69.7%",
+   "Player-specific ranges": "71.9%"
+  },
+  {
+   "Test": "Props, 2025 real lines \u2014 Brier (market 0.2498)",
+   "Before": 0.2557,
+   "Player-specific ranges": 0.2555
+  },
+  {
+   "Test": "Props, market-anchored, unseen weeks 9\u201315 \u2014 Brier (market 0.2496)",
+   "Before": 0.2496,
+   "Player-specific ranges": 0.2499
+  }
+ ]
+}
