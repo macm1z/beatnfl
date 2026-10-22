@@ -561,6 +561,23 @@ with tab_saved:
                 "Difference": st.column_config.NumberColumn("Difference", format="%+.1f")})
             if g_["hindsight"]:
                 st.caption("Best possible lineup: " + " · ".join(f"{n} ({p}) {a}" for n, p, a in g_["hindsight"]["players"]))
+            if st.button("🔁 Which projection source would have done best?", key="cmp_src",
+                         help="Rebuilds the same number of lineups with the same settings from each source alone "
+                              "(as it stood before kickoff) and grades them on the real results."):
+                from beatnfl import grading
+                with st.spinner("Rebuilding and grading…"):
+                    try:
+                        ss["cmp_src"] = (int(sid), grading.compare_sources(int(sid), offline=offline))
+                    except StepError as e:
+                        st.error(e.as_text())
+            cs = ss.get("cmp_src")
+            if cs and cs[0] == int(sid) and not cs[1].empty:
+                show(cs[1].rename(columns={"source": "Projections used", "lineups": "Lineups", "avg_projected": "Avg projected",
+                                           "avg_actual": "Avg actual", "best": "Best", "worst": "Worst",
+                                           "players_projected": "Players covered"}), {
+                    "Avg projected": st.column_config.NumberColumn("Avg projected", format="%.1f"),
+                    "Avg actual": st.column_config.NumberColumn("Avg actual", format="%.1f")})
+                st.caption("One week is mostly luck — the same check over several weeks shows which source to trust.")
 
 
 # ------------------------------------------------------------------ shared: betting lines

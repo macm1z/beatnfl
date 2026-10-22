@@ -924,3 +924,20 @@ def test_grade_saved_lineups_against_results(monkeypatch):
     assert g["lineups"].iloc[0].actual == exp and g["summary"]["graded"] == 3
     assert g["players"].set_index("player").at[idx.at[off[-1], "name"], "actual"] == 0.0
     assert g["hindsight"] and g["summary"]["hindsight_best"] >= g["summary"]["best"]
+
+
+def test_compare_sources_rebuilds_from_each_source(monkeypatch):
+    from beatnfl import grading
+    ls, pool = pool_from_fixture()
+    pool = pool.assign(proj_sleeper=pool.proj * 0.9, proj_model=pool.proj * 1.1)
+    sid = storage.save_slate(ls, 2026, 6)
+    run_id = storage.save_projection_run(sid, pool, "t", {})
+    r = optimizer.build(pool, optimizer.OptSettings(n_lineups=3, randomness=0))
+    old = storage.find_same_set(sid, r.lineups)          # identical set saved by an earlier test → start fresh
+    if old:
+        storage.delete_lineup_set(old)
+    set_id = storage.save_lineup_set("cmp", sid, run_id, {"n_lineups": 3, "randomness": 0.0}, r.lineups, pool, r.status, r.diagnostics)
+    monkeypatch.setattr(grading, "actual_points", lambda pool, s, w, offline=False: pd.Series(10.0, index=pool.dk_id.values))
+    t = grading.compare_sources(set_id)
+    assert {"Combined (what you used)", "Sleeper only", "BeatNFL model only"} <= set(t.source), t.to_string()
+    assert (t.lineups == 3).all() and (t.avg_actual == 90.0).all()

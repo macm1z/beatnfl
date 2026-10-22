@@ -93,3 +93,40 @@ def grade_set(set_id: int, offline=False) -> dict:
          "proj_rank_corr": round(float(L[done][["proj", "actual"]].corr(method="spearman").iloc[0, 1]), 2) if done.sum() > 3 else None,
          "hindsight_best": best["actual"] if best else None}
     return {"summary": s, "lineups": L, "players": P.sort_values("lineups", ascending=False), "hindsight": best}
+
+
+SOURCES = {"proj": "Combined (what you used)", "proj_paid": "FantasyPros / yours only", "proj_sleeper": "Sleeper only",
+           "proj_model": "BeatNFL model only"}
+
+
+def compare_sources(set_id: int, offline=False) -> pd.DataFrame:
+    """Rebuild the same number of lineups with the same settings from each projection source alone
+    (as they stood before kickoff), and grade them all on the real results — which source would have
+    produced the best lineups this week."""
+    d = storage.load_lineup_set(int(set_id))
+    _, pool = storage.get_projection_run(d["projection_run_id"])
+    slate, _ = storage.get_slate(d["slate_id"])
+    act = actual_points(pool, int(slate["season"]), int(slate["week"]), offline=offline)
+    keep = {k: v for k, v in (d.get("settings") or {}).items() if k in optimizer.OptSettings.__dataclass_fields__}
+    keep.update({"n_lineups": len(d["lineups"]) or 20, "locks": [], "excludes": []})
+    rows = []
+    for col, label in SOURCES.items():
+        if col not in pool or pool[col].notna().sum() < 50:
+            continue
+        p = pool.copy()
+        p["proj"] = p[col]
+        p.loc[p.out, "proj"] = np.nan
+        try:
+            r = optimizer.build(p, optimizer.OptSettings(**keep))
+        except Exception:  # noqa: BLE001
+            continue
+        if not r.lineups:
+            continue
+        idx = p.set_index("dk_id")
+        a = [float(act.reindex(lu).sum()) for lu in r.lineups if act.reindex(lu).notna().all()]
+        pr = [float(idx.loc[lu].proj.sum()) for lu in r.lineups]
+        rows.append({"source": label, "lineups": len(r.lineups), "avg_projected": round(float(np.mean(pr)), 1),
+                     "avg_actual": round(float(np.mean(a)), 1) if a else np.nan,
+                     "best": round(float(np.max(a)), 1) if a else np.nan, "worst": round(float(np.min(a)), 1) if a else np.nan,
+                     "players_projected": int(pool[col].notna().sum())})
+    return pd.DataFrame(rows)
