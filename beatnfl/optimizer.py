@@ -27,8 +27,8 @@ class OptSettings:
     n_lineups: int = 20
     min_salary: int = 49000
     max_salary: int = CAP
-    max_exposure: float = 0.6
-    min_unique: int = 2
+    max_exposure: float = 0.35
+    min_unique: int = 3
     stack_min: int = 1
     bring_back: int = 0
     stack_positions: tuple = ("WR", "TE")

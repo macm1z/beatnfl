@@ -41,8 +41,9 @@ class Settings:
     # Optimizer defaults (Classic GPP)
     n_lineups: int = 20
     min_salary: int = 49000
-    max_exposure: float = 0.60
-    min_unique: int = 2
+    max_exposure: float = 0.35    # ≤ 7 of 20 lineups per player (was 0.60 — one bust sank most lineups)
+    min_unique: int = 3           # lineups differ by ≥ 3 players (was 2)
+    settings_version: int = 2
     stack_min: int = 1          # pass catchers stacked with QB
     bring_back: int = 0         # opponents of QB's team
     randomness: float = 0.12    # per-lineup projection noise (fraction of projection)
@@ -61,6 +62,12 @@ class Settings:
                 for k, v in raw.items():
                     if hasattr(s, k):
                         setattr(s, k, v)
+                if int(raw.get("settings_version", 1)) < 2:   # move people still on the old defaults to the new ones
+                    if float(raw.get("max_exposure", 0.6)) == 0.6:
+                        s.max_exposure = 0.35
+                    if int(raw.get("min_unique", 2)) == 2:
+                        s.min_unique = 3
+                    s.settings_version = 2
             except Exception:
                 pass  # a corrupt settings file never blocks the app; defaults are used
         env_key = os.environ.get("ODDS_API_KEY")
