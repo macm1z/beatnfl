@@ -90,7 +90,7 @@ Gradient-boosted forecasts of DK points and of each prop stat:
 - **Player inputs:** recent form (exponentially weighted), target and rush share, snap share (pm-1.3), the starting QB — who's listed to start, whether it's a change, and his record (pm-1.4; expected starter from Sleeper's depth chart before games) — efficiency, and opportunity vacated by inactive teammates.
 - **Game inputs:** team pace, game line (implied total and spread), and opponent defense.
 
-Settings (pm-1.6) were picked by scoring 20 variants on 2022–2025: history back to 2012, smaller trees and a 20% blend with a linear model won on every target, every season.
+Settings (pm-1.6) were picked by scoring 19 variants on 2022–2025: history back to 2012, smaller trees and a 20% blend with a linear model won on every target, every season.
 
 Each player also gets his own **Floor** and **Ceiling** (15th/85th percentile, pm-1.5) — boom-or-bust players get wider ranges.
 

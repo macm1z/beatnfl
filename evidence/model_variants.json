@@ -1,5 +1,5 @@
 {
- "verdict": "Twenty model variants were scored on 2022\u20132025 (each season predicted by a model trained only on earlier seasons) by average miss, large-miss error, bias, weekly ranking and the actual points of each method's top picks. Adopted (pm-1.6): history back to 2012, smaller trees and a 20% blend with a linear model \u2014 better in all 4 seasons on DK points, every position, top picks, and every stat forecast. Separate per-position models were worse (less data each) and were not used.",
+ "verdict": "Nineteen model variants were scored on 2022\u20132025 (each season predicted by a model trained only on earlier seasons) by average miss, large-miss error, bias, weekly ranking and the actual points of each method's top picks. Adopted (pm-1.6): history back to 2012, smaller trees and a 20% blend with a linear model \u2014 better in all 4 seasons on DK points, every position, top picks, and every stat forecast. Separate per-position models were worse (less data each) and were not used.",
  "rows": [
   {
    "Variant": "Previous model",
