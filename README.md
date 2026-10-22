@@ -53,6 +53,8 @@ Tabs: **This week** (pool and lineups) · **Saved lineups** (rename, delete, rem
 
 **Sportsbook lines in the model (step 4d):** with the Odds API key set, each Refresh reads the books' player prop lines (yards, receptions, anytime TD) for the slate and moves the model's DraftKings projection toward them — the *Book lines* column shows by how much. On unseen 2025 weeks the lines out-predicted the model on every yardage stat, and folding them in lowered the DK-points miss. About 5 credits per game, reused for 3 hours. Turn off in Settings.
 
+**Grade your lineups:** *Saved lineups → open a set → 📊 Grade against actual results* (after the games are final, usually Tuesday) shows each lineup's real DraftKings points vs projection, every player's real score and how many lineups he was in, and the best lineup that was possible on that slate in hindsight.
+
 **Game-day check:** after you save lineups, *This week* flags any player in them who is later ruled out (or Questionable). With Automatic checks on (sidebar), the Mac re-checks after each inactive list posts (Thu 7 PM, Sun 11:50 AM / 3:10 PM / 7 PM, Mon 7 PM) and notifies you. CLI: `python -m beatnfl gamecheck`. Practice reports were tested as model inputs and did not help (Evidence), so they aren't used.
 
 **Picks (research only, experimental):** the 2025 backtest on real lines found no proven edge for the model on props. The one hint — Unders where the model is 10+ points below the market — is what *Picks → Find this week's picks* now logs (FantasyPros must agree when your key is set), at the best price across books, so the rule is tested on games it has never seen. Each pick is logged at that price and graded after the games: result, units at 1 per pick, and **closing-line value** (your price vs the market's last price before kickoff — the quick, honest test of whether an edge is real). On a Mac, turn on *Automatic checks* to run the list Wednesday 7 PM (with a notification) and record closing prices before Thursday, Sunday and Monday games. Nothing is ever bet. CLI: `python -m beatnfl midweek`, `python -m beatnfl close`.
@@ -142,4 +144,4 @@ Two checks only run on your computer, because their sources were blocked from th
 - `~/BeatNFL/evidence` — test results
 - `~/BeatNFL/beatnfl.log` — technical detail for any failure
 
-Tests: `.venv/bin/python -m pytest -q tests` (47 offline tests; `BEATNFL_FULL=1` adds 6 end-to-end tests that click every button).
+Tests: `.venv/bin/python -m pytest -q tests` (48 offline tests; `BEATNFL_FULL=1` adds 6 end-to-end tests that click every button).

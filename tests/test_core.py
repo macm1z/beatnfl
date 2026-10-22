@@ -895,3 +895,32 @@ def test_expected_starting_qb_skips_ruled_out_and_backups():
     assert out2[out2.week == 6].qb_id["CIN"] == "burrow"
     out3 = train.expected_starters(tg, 2026, 6, None, out_ids={"burrow"}).set_index("team")
     assert pd.isna(out3[out3.week == 6].qb_id["CIN"])
+
+
+def test_grade_saved_lineups_against_results(monkeypatch):
+    from beatnfl import grading
+    from beatnfl.sources import nflverse as nv
+    ls, pool = pool_from_fixture()
+    sid = storage.save_slate(ls, 2026, 6)
+    run_id = storage.save_projection_run(sid, pool, "t", {})
+    r = optimizer.build(pool, optimizer.OptSettings(n_lineups=3, randomness=0))
+    set_id = storage.save_lineup_set("grade-me", sid, run_id, {}, r.lineups, pool, r.status, r.diagnostics)
+    idx = pool.set_index("dk_id")
+    used = sorted({x for lu in r.lineups for x in lu})
+    off = [x for x in used if idx.at[x, "pos"] != "DST"]
+    scored = off[:-1]                                     # the last one has no stat line → didn't play → 0
+    stats = pd.DataFrame({"player_display_name": [idx.at[x, "name"] for x in scored], "position": [idx.at[x, "pos"] for x in scored],
+                          "team": [idx.at[x, "team"] for x in scored], "week": 6, "season": 2026, "dk_pts": 10.0})
+    teams = sorted(set(pool.team))
+    sched = pd.DataFrame({"season": 2026, "week": 6, "game_type": "REG", "home_team": teams[::2], "away_team": teams[1::2],
+                          "home_score": 20.0, "away_score": 17.0})
+    monkeypatch.setattr(nv, "weekly_stats", lambda *a, **k: stats)
+    monkeypatch.setattr(nv, "schedules", lambda *a, **k: sched)
+    monkeypatch.setattr(nv, "team_games", lambda s: pd.DataFrame())
+    monkeypatch.setattr(nv, "dst_weekly", lambda st, tg: pd.DataFrame({"season": 2026, "week": 6, "team": teams, "dk_pts": 5.0}))
+    g = grading.grade_set(set_id)
+    lu1 = r.lineups[0]
+    exp = sum(10.0 if x in scored else (5.0 if idx.at[x, "pos"] == "DST" else 0.0) for x in lu1)
+    assert g["lineups"].iloc[0].actual == exp and g["summary"]["graded"] == 3
+    assert g["players"].set_index("player").at[idx.at[off[-1], "name"], "actual"] == 0.0
+    assert g["hindsight"] and g["summary"]["hindsight_best"] >= g["summary"]["best"]

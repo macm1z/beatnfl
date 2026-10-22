@@ -188,7 +188,7 @@ def test_app_every_button(live, monkeypatch):
     assert not at.exception, [e.value for e in at.exception]
     labels = ["⟳ Refresh", "⚙ Build lineups", "💾 Save", "Load roster & projections", "Load matchups",
               "Forecast every player this week", "Load props", "Grade frozen forecasts", "Grade live weights", "Copy diagnostics", "Check for updates",
-              "🔎 Find this week's picks", "Grade picks", "Record closing prices now", "Use these weights", "⟳ Refresh"]
+              "🔎 Find this week's picks", "Grade picks", "Record closing prices now", "Use these weights", "📊 Grade against actual results", "⟳ Refresh"]
     at.text_area(key="pasted_proj").input(live["_paste"])
     for lab in labels:
         btn = [b for b in at.button if b.label == lab]

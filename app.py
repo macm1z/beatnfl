@@ -516,6 +516,52 @@ with tab_saved:
         e2.download_button("⬇ Readable lineups CSV", export.readable_text(lus, pool),
                            file_name=f"Lineups_{d['name']}.csv", mime="text/csv", width="stretch", key="dl_saved_rd")
 
+        st.divider()
+        st.subheader("How did these lineups do?")
+        if st.button("📊 Grade against actual results", key="grade_set",
+                     help="After the games are final: each lineup's real DraftKings points vs projection, every player's "
+                          "real score, and the best lineup that was possible on this slate in hindsight."):
+            from beatnfl import grading
+            with st.spinner("Reading final stats…"):
+                try:
+                    ss["graded"] = (int(sid), grading.grade_set(int(sid), offline=offline))
+                except StepError as e:
+                    st.error(e.as_text())
+        gd = ss.get("graded")
+        if gd and gd[0] == int(sid):
+            g_ = gd[1]
+            sm = g_["summary"]
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Average actual", sm["avg_actual"], f"{sm['avg_actual'] - sm['avg_proj']:+.1f} vs projected"
+                      if sm["avg_actual"] is not None else None)
+            m2.metric("Best lineup", sm["best"])
+            m3.metric("Worst lineup", sm["worst"])
+            m4.metric("Beat projection", f"{sm['beat_proj']} of {sm['graded']}")
+            m5.metric("Best possible", sm["hindsight_best"], help="The highest-scoring lineup anyone could have built on this "
+                      "slate with these salaries, knowing the results.")
+            if sm["graded"] < sm["n"]:
+                st.caption(f"{sm['n'] - sm['graded']} lineup(s) include games that aren't final yet.")
+            L = g_["lineups"].copy()
+            lv = pd.DataFrame({"Lineup": L.lineup, "Projected": L.proj, "Actual": L.actual, "Difference": (L.actual - L.proj).round(1),
+                               **{f"P{k + 1}": [f"{pl[k][0]} {pl[k][3] if pl[k][3] is not None else '–'}" for pl in L.players]
+                                  for k in range(9)}})
+            lv = lv.rename(columns={f"P{k + 1}": c for k, c in enumerate(["QB", "RB", "RB2", "WR", "WR2", "WR3", "TE", "FLEX", "DST"])})
+            show(lv.sort_values("Actual", ascending=False), {
+                "Projected": st.column_config.NumberColumn("Projected", format="%.1f"),
+                "Actual": st.column_config.NumberColumn("Actual", format="%.1f"),
+                "Difference": st.column_config.NumberColumn("Difference", format="%+.1f")})
+            st.caption("Each player cell shows his actual DraftKings points.")
+            st.markdown("**Players you used**")
+            P = g_["players"]
+            show(P.rename(columns={"player": "Player", "pos": "Pos", "team": "Team", "salary": "Salary", "proj": "Projected",
+                                   "actual": "Actual", "diff": "Difference", "lineups": "In lineups"}), {
+                "Salary": st.column_config.NumberColumn("Salary", format="$%d"),
+                "Projected": st.column_config.NumberColumn("Projected", format="%.1f"),
+                "Actual": st.column_config.NumberColumn("Actual", format="%.1f"),
+                "Difference": st.column_config.NumberColumn("Difference", format="%+.1f")})
+            if g_["hindsight"]:
+                st.caption("Best possible lineup: " + " · ".join(f"{n} ({p}) {a}" for n, p, a in g_["hindsight"]["players"]))
+
 
 # ------------------------------------------------------------------ shared: betting lines
 def raw_lines():
