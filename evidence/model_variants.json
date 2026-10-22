@@ -1,0 +1,204 @@
+{
+ "verdict": "Twenty model variants were scored on 2022\u20132025 (each season predicted by a model trained only on earlier seasons) by average miss, large-miss error, bias, weekly ranking and the actual points of each method's top picks. Adopted (pm-1.6): history back to 2012, smaller trees and a 20% blend with a linear model \u2014 better in all 4 seasons on DK points, every position, top picks, and every stat forecast. Separate per-position models were worse (less data each) and were not used.",
+ "rows": [
+  {
+   "Variant": "Previous model",
+   "Avg miss": 4.532,
+   "Change": 0.0,
+   "Better seasons": "0/4",
+   "Top picks' pts": 15.33,
+   "Top picks change": 0.0
+  },
+  {
+   "Variant": "Separate model per position",
+   "Avg miss": 4.609,
+   "Change": 0.077,
+   "Better seasons": "0/4",
+   "Top picks' pts": 15.12,
+   "Top picks change": -0.213
+  },
+  {
+   "Variant": "History back to 2012",
+   "Avg miss": 4.511,
+   "Change": -0.021,
+   "Better seasons": "4/4",
+   "Top picks' pts": 15.44,
+   "Top picks change": 0.109
+  },
+  {
+   "Variant": "Per position + 2012 history",
+   "Avg miss": 4.545,
+   "Change": 0.013,
+   "Better seasons": "2/4",
+   "Top picks' pts": 15.29,
+   "Top picks change": -0.044
+  },
+  {
+   "Variant": "Weight recent seasons more",
+   "Avg miss": 4.519,
+   "Change": -0.013,
+   "Better seasons": "3/4",
+   "Top picks' pts": 15.37,
+   "Top picks change": 0.039
+  },
+  {
+   "Variant": "More, slower trees",
+   "Avg miss": 4.53,
+   "Change": -0.001,
+   "Better seasons": "1/4",
+   "Top picks' pts": 15.34,
+   "Top picks change": 0.006
+  },
+  {
+   "Variant": "Bigger trees",
+   "Avg miss": 4.545,
+   "Change": 0.014,
+   "Better seasons": "1/4",
+   "Top picks' pts": 15.27,
+   "Top picks change": -0.062
+  },
+  {
+   "Variant": "Smaller trees",
+   "Avg miss": 4.52,
+   "Change": -0.011,
+   "Better seasons": "4/4",
+   "Top picks' pts": 15.36,
+   "Top picks change": 0.03
+  },
+  {
+   "Variant": "Poisson loss",
+   "Avg miss": 4.528,
+   "Change": -0.004,
+   "Better seasons": "3/4",
+   "Top picks' pts": 15.35,
+   "Top picks change": 0.012
+  },
+  {
+   "Variant": "20% linear blend",
+   "Avg miss": 4.516,
+   "Change": -0.015,
+   "Better seasons": "4/4",
+   "Top picks' pts": 15.39,
+   "Top picks change": 0.054
+  },
+  {
+   "Variant": "Shorter recent-form window",
+   "Avg miss": 4.532,
+   "Change": 0.0,
+   "Better seasons": "0/4",
+   "Top picks' pts": 15.33,
+   "Top picks change": 0.0
+  },
+  {
+   "Variant": "Longer recent-form window",
+   "Avg miss": 4.532,
+   "Change": 0.0,
+   "Better seasons": "0/4",
+   "Top picks' pts": 15.33,
+   "Top picks change": 0.0
+  },
+  {
+   "Variant": "\u2605 2012 + smaller trees + 20% linear (adopted)",
+   "Avg miss": 4.498,
+   "Change": -0.034,
+   "Better seasons": "4/4",
+   "Top picks' pts": 15.44,
+   "Top picks change": 0.101
+  },
+  {
+   "Variant": "2012 + smaller trees + 30% linear",
+   "Avg miss": 4.496,
+   "Change": -0.035,
+   "Better seasons": "4/4",
+   "Top picks' pts": 15.43,
+   "Top picks change": 0.101
+  },
+  {
+   "Variant": "2012 + 20% linear",
+   "Avg miss": 4.501,
+   "Change": -0.031,
+   "Better seasons": "4/4",
+   "Top picks' pts": 15.41,
+   "Top picks change": 0.079
+  },
+  {
+   "Variant": "2012 + smaller trees",
+   "Avg miss": 4.505,
+   "Change": -0.027,
+   "Better seasons": "4/4",
+   "Top picks' pts": 15.47,
+   "Top picks change": 0.132
+  },
+  {
+   "Variant": "adopted + recency weighting",
+   "Avg miss": 4.502,
+   "Change": -0.029,
+   "Better seasons": "4/4",
+   "Top picks' pts": 15.4,
+   "Top picks change": 0.066
+  },
+  {
+   "Variant": "adopted + shorter form window",
+   "Avg miss": 4.497,
+   "Change": -0.035,
+   "Better seasons": "4/4",
+   "Top picks' pts": 15.46,
+   "Top picks change": 0.129
+  },
+  {
+   "Variant": "adopted + longer form window",
+   "Avg miss": 4.503,
+   "Change": -0.029,
+   "Better seasons": "4/4",
+   "Top picks' pts": 15.41,
+   "Top picks change": 0.077
+  }
+ ],
+ "stats": [
+  {
+   "Forecast": "any_td",
+   "Change in miss %": -0.89,
+   "Better seasons": "4/4"
+  },
+  {
+   "Forecast": "pass_att",
+   "Change in miss %": -3.7,
+   "Better seasons": "4/4"
+  },
+  {
+   "Forecast": "pass_cmp",
+   "Change in miss %": -3.22,
+   "Better seasons": "4/4"
+  },
+  {
+   "Forecast": "pass_td",
+   "Change in miss %": -2.6,
+   "Better seasons": "4/4"
+  },
+  {
+   "Forecast": "pass_yds",
+   "Change in miss %": -2.93,
+   "Better seasons": "4/4"
+  },
+  {
+   "Forecast": "rec",
+   "Change in miss %": -0.58,
+   "Better seasons": "4/4"
+  },
+  {
+   "Forecast": "rec_yds",
+   "Change in miss %": -0.49,
+   "Better seasons": "4/4"
+  },
+  {
+   "Forecast": "rush_att",
+   "Change in miss %": -1.46,
+   "Better seasons": "4/4"
+  },
+  {
+   "Forecast": "rush_yds",
+   "Change in miss %": -1.53,
+   "Better seasons": "4/4"
+  }
+ ]
+}

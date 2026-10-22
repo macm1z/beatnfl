@@ -1218,6 +1218,12 @@ with tab_evidence:
         st.markdown(f"**Sportsbook lines in the model** — {m_['verdict']}")
         st.dataframe(pd.DataFrame(m_["rows"]), hide_index=True)
         st.caption(m_["note"] + " For DK points the 'book line' column is the model with the lines folded in.")
+    mvt = APP_ROOT / "evidence" / "model_variants.json"
+    if mvt.exists():
+        m_ = json.loads(mvt.read_text())
+        st.markdown(f"**Model settings tested** — {m_['verdict']}")
+        st.dataframe(pd.DataFrame(m_["rows"]), hide_index=True)
+        st.dataframe(pd.DataFrame(m_["stats"]), hide_index=True)
     rgt = APP_ROOT / "evidence" / "ranges_test.json"
     if rgt.exists():
         m_ = json.loads(rgt.read_text())

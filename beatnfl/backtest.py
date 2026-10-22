@@ -372,7 +372,7 @@ def source_compare(fp_key: str, seasons=None, current_weights=None, offline=Fals
     from .sources import fantasypros, sleeper
     cur = nv.current_season()
     seasons = list(seasons or (cur - 1, cur))
-    stats = nv.weekly_stats(range(2018, cur + 1), offline=offline)
+    stats = nv.weekly_stats(range(2012, cur + 1), offline=offline)
     sched = nv.schedules(offline=offline)
     tg = nv.team_games(sched)
     feat = F.build(F.tidy_stats(stats), tg)

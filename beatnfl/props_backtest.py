@@ -65,7 +65,7 @@ def estimate(season: int, markets=None, offline=False) -> dict:
 def season_model(season: int, offline=False, progress=lambda m: None) -> tuple[PlayerModel, pd.DataFrame]:
     """Model as the app would have had it before `season`, plus that season's player-game features."""
     BT_DIR.mkdir(parents=True, exist_ok=True)
-    stats = nv.weekly_stats(range(2018, season + 1), offline=offline)
+    stats = nv.weekly_stats(range(2012, season + 1), offline=offline)
     sched = nv.schedules(offline=offline)
     tg = nv.team_games(sched)
     feat = F.build(F.tidy_stats(stats), tg)

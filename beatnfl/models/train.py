@@ -18,7 +18,7 @@ from . import features as F
 from .players import MODEL_VERSION, PlayerModel
 
 MODEL_DIR = HOME / "models"
-FIRST_SEASON = 2018
+FIRST_SEASON = 2012   # more history tested better (variant bench, 2022–2025)
 
 
 def _hist(offline=False, first=FIRST_SEASON):
@@ -157,8 +157,7 @@ def forecast(slate: pd.DataFrame, sleeper_players: pd.DataFrame | None, pm: Play
              lines: pd.DataFrame | None = None, offline=False) -> tuple[pd.DataFrame, list[str], dict]:
     """In-house model forecast for every slate player. Returns (df[dk_id, proj_model, model stats…], warnings, info)."""
     warns = []
-    cur = nv.current_season()
-    stats, sched, tg = _hist(offline, first=cur - 3)
+    stats, sched, tg = _hist(offline)   # same history as training, so counts like starts/prior games match
     season, week, games = locate_week(slate, sched)
     tg = apply_lines(tg, lines, season, week)  # fresher market lines override schedule lines
     wk = tg[(tg.season == season) & (tg.week == week)]
@@ -234,7 +233,7 @@ def forecast_week(season: int, week: int, sleeper_players: pd.DataFrame | None, 
 
     Likely active = played for the team in one of its last 3 games and not ruled out by Sleeper."""
     warns = []
-    stats, sched, tg = _hist(offline, first=season - 3)
+    stats, sched, tg = _hist(offline)
     tg = apply_lines(tg, lines, season, week)
     wk = tg[(tg.season == season) & (tg.week == week)]
     if wk.empty:

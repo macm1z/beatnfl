@@ -17,7 +17,7 @@ from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostin
 
 from .features import FEATURES, PBP_FEATURES
 
-MODEL_VERSION = "pm-1.5"   # 1.3: snap share · 1.4: starting-QB context · 1.5: floor/ceiling
+MODEL_VERSION = "pm-1.6"   # 1.3 snap share · 1.4 starting QB · 1.5 floor/ceiling · 1.6 tuned trees + linear blend, 2012+
 
 # target -> positions trained on
 TARGETS = {
@@ -28,8 +28,11 @@ TARGETS = {
 }
 CLASS_TARGETS = {"any_td": ["QB", "RB", "WR", "TE"]}
 QUANTILES = (0.15, 0.85)
-GBM = dict(max_iter=350, learning_rate=0.04, max_leaf_nodes=24, min_samples_leaf=60, l2_regularization=1.0,
+# Settings chosen by the variant bench (2022–2025, model trained on earlier seasons each time): smaller,
+# more cautious trees + a 20% blend with a linear model beat the old settings on every target, every season.
+GBM = dict(max_iter=350, learning_rate=0.04, max_leaf_nodes=12, min_samples_leaf=120, l2_regularization=1.0,
            early_stopping=False, random_state=7)
+LINEAR_BLEND = 0.2
 
 
 @dataclass
@@ -52,12 +55,19 @@ class PlayerModel:
             self.features = list(FEATURES)
         FEATURES_ = self.features
         f = feat[feat.n_prior >= 1]
+        from sklearn.linear_model import LogisticRegression, Ridge
+        self.lin = {}
         for t, poss in TARGETS.items():
             d = f[f.position.isin(poss) & f[t].notna()]
             self.regs[t] = HistGradientBoostingRegressor(loss="squared_error", **GBM).fit(d[FEATURES_], d[t])
+            med = d[FEATURES_].median()
+            self.lin[t] = (Ridge(alpha=10).fit(d[FEATURES_].fillna(med), d[t]), med, None)
         for t, poss in CLASS_TARGETS.items():
             d = f[f.position.isin(poss) & f[t].notna()]
             self.clfs[t] = HistGradientBoostingClassifier(**GBM).fit(d[FEATURES_], d[t].astype(int))
+            med, sd = d[FEATURES_].median(), d[FEATURES_].std().replace(0, 1).fillna(1)
+            lr = LogisticRegression(C=0.1, max_iter=2000).fit((d[FEATURES_].fillna(med) - med) / sd, d[t].astype(int))
+            self.lin[t] = (lr, med, sd)
         # player-specific floor / ceiling for DK points (15th / 85th percentile). Tested 2025: better-calibrated
         # ceilings than the shared error spread (90th pct hit 10.2% vs 9.3%; target 10%) — see Evidence.
         d = f[f.position.isin(TARGETS["dk_pts"]) & f.dk_pts.notna()]
@@ -73,12 +83,22 @@ class PlayerModel:
             m = feat.position.isin(poss)
             out[f"p_{t}"] = np.nan
             if m.any():
-                out.loc[m, f"p_{t}"] = np.clip(self.regs[t].predict(feat.loc[m, self._cols(feat)]), 0, None)
+                X = feat.loc[m, self._cols(feat)]
+                p = self.regs[t].predict(X)
+                lin = (getattr(self, "lin", None) or {}).get(t)
+                if lin:
+                    p = (1 - LINEAR_BLEND) * p + LINEAR_BLEND * lin[0].predict(X.fillna(lin[1]))
+                out.loc[m, f"p_{t}"] = np.clip(p, 0, None)
         for t, poss in CLASS_TARGETS.items():
             m = feat.position.isin(poss)
             out[f"p_{t}"] = np.nan
             if m.any():
-                out.loc[m, f"p_{t}"] = self.clfs[t].predict_proba(feat.loc[m, self._cols(feat)])[:, 1]
+                X = feat.loc[m, self._cols(feat)]
+                p = self.clfs[t].predict_proba(X)[:, 1]
+                lin = (getattr(self, "lin", None) or {}).get(t)
+                if lin:
+                    p = (1 - LINEAR_BLEND) * p + LINEAR_BLEND * lin[0].predict_proba((X.fillna(lin[1]) - lin[1]) / lin[2])[:, 1]
+                out.loc[m, f"p_{t}"] = p
         qregs = getattr(self, "qregs", None) or {}
         m = feat.position.isin(TARGETS["dk_pts"])
         for q, name in ((0.15, "p_dk_floor"), (0.85, "p_dk_ceiling")):
