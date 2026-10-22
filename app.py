@@ -560,7 +560,17 @@ with tab_saved:
                 "Actual": st.column_config.NumberColumn("Actual", format="%.1f"),
                 "Difference": st.column_config.NumberColumn("Difference", format="%+.1f")})
             if g_["hindsight"]:
-                st.caption("Best possible lineup: " + " · ".join(f"{n} ({p}) {a}" for n, p, a in g_["hindsight"]["players"]))
+                st.markdown("**The best possible lineup — how we saw those players before kickoff**")
+                ht = g_["hindsight"].get("table")
+                if ht is not None and not ht.empty:
+                    show(ht.rename(columns={"player": "Player", "pos": "Pos", "salary": "Salary", "actual": "Actual",
+                                            "projected": "Our projection", "pos_rank": "Rank at position",
+                                            "value_rank": "Value rank", "in_lineups": "In your lineups"}), {
+                        "Salary": st.column_config.NumberColumn("Salary", format="$%d"),
+                        "Rank at position": st.column_config.NumberColumn("Rank at position", help="Where our projection ranked him among his position's players (1 = highest)."),
+                        "Value rank": st.column_config.NumberColumn("Value rank", help="Rank by projected points per dollar at his position.")})
+                    st.caption("High ranks that weren't in your lineups = the settings left them out. Low ranks = the "
+                               "projections didn't see the big game coming (common — most hindsight lineups are full of surprises).")
             if st.button("🔁 Which projection source would have done best?", key="cmp_src",
                          help="Rebuilds the same number of lineups with the same settings from each source alone "
                               "(as it stood before kickoff) and grades them on the real results."):

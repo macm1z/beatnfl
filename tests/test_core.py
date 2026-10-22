@@ -924,6 +924,8 @@ def test_grade_saved_lineups_against_results(monkeypatch):
     assert g["lineups"].iloc[0].actual == exp and g["summary"]["graded"] == 3
     assert g["players"].set_index("player").at[idx.at[off[-1], "name"], "actual"] == 0.0
     assert g["hindsight"] and g["summary"]["hindsight_best"] >= g["summary"]["best"]
+    ht = g["hindsight"]["table"]
+    assert len(ht) == 9 and {"projected", "pos_rank", "value_rank", "in_lineups"} <= set(ht.columns)
 
 
 def test_compare_sources_rebuilds_from_each_source(monkeypatch):

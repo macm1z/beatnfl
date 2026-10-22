@@ -79,8 +79,21 @@ def grade_set(set_id: int, offline=False) -> dict:
         if r.lineups:
             lu = r.lineups[0]
             hi = hp.set_index("dk_id")
+            # how our pre-game projections saw each of these players (rank within position, by points and by value)
+            pre = pool[pool.proj.notna() & ~pool.out].copy()
+            pre["pos_rank"] = pre.groupby("pos").proj.rank(ascending=False, method="min")
+            pre["val_rank"] = (pre.proj / pre.salary).groupby(pre.pos).rank(ascending=False, method="min")
+            pre = pre.set_index("dk_id")
+            used = {x: sum(x in l for l in d["lineups"]) for x in lu}
             best = {"actual": round(float(hi.loc[lu].proj.sum()), 1),
-                    "players": [(hi.at[x, "name"], hi.at[x, "pos"], round(float(hi.at[x, "proj"]), 1)) for x in lu]}
+                    "players": [(hi.at[x, "name"], hi.at[x, "pos"], round(float(hi.at[x, "proj"]), 1)) for x in lu],
+                    "table": pd.DataFrame([{
+                        "player": hi.at[x, "name"], "pos": hi.at[x, "pos"], "salary": int(hi.at[x, "salary"]),
+                        "actual": round(float(hi.at[x, "proj"]), 1),
+                        "projected": round(float(pre.at[x, "proj"]), 1) if x in pre.index else np.nan,
+                        "pos_rank": int(pre.at[x, "pos_rank"]) if x in pre.index else np.nan,
+                        "value_rank": int(pre.at[x, "val_rank"]) if x in pre.index else np.nan,
+                        "in_lineups": used[x]} for x in lu])}
     except Exception:  # noqa: BLE001
         best = None
     done = L.actual.notna()
