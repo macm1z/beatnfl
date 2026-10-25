@@ -43,9 +43,17 @@ def _need(client_id: str, secret: str):
                         "Fantasy Sports: Read), then paste both values into Settings.")
 
 
+SCOPE = "fspt-r"    # Fantasy Sports, read. Asked for explicitly: apps that also tick OpenID permissions otherwise
+                    # get a sign-in that Yahoo's Fantasy API refuses with 403.
+SCOPE_OFF = HOME / "yahoo_no_scope"     # set if Yahoo rejects the explicit scope for this app
+
+
 def auth_url(client_id: str, redirect_uri: str = DEFAULT_REDIRECT) -> str:
-    return AUTH + "?" + urlencode({"client_id": client_id.strip(), "redirect_uri": (redirect_uri or DEFAULT_REDIRECT).strip(),
-                                   "response_type": "code", "language": "en-us"})
+    q = {"client_id": client_id.strip(), "redirect_uri": (redirect_uri or DEFAULT_REDIRECT).strip(),
+         "response_type": "code", "language": "en-us"}
+    if not SCOPE_OFF.exists():
+        q["scope"] = SCOPE
+    return AUTH + "?" + urlencode(q)
 
 
 def extract_code(pasted: str) -> str:
@@ -163,6 +171,10 @@ def start_catcher(client_id: str, secret: str, redirect_uri: str = DEFAULT_REDIR
                                 "sign-in button again.")
             elif q.get("error"):
                 CATCH["status"] = "error: Yahoo said " + (q.get("error_description") or q["error"])[0]
+                if "scope" in (q["error"][0] + str(q.get("error_description", ""))).lower():
+                    ensure_dirs()
+                    SCOPE_OFF.write_text("1")           # this app can't take the explicit scope — sign in without it
+                    CATCH["status"] += " — click the sign-in button again (the app adjusted the request)"
                 self._reply("Yahoo didn't approve the sign-in", CATCH["status"])
             else:
                 CATCH["status"] = "error: Yahoo came back without a code (address: " + self.path[:120] + ")"
@@ -222,6 +234,7 @@ def connected() -> bool:
 
 def disconnect() -> None:
     TOKEN_PATH.unlink(missing_ok=True)
+    stop_catcher()
 
 
 def _access(client_id: str, secret: str) -> str:
