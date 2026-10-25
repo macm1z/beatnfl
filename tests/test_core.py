@@ -1077,9 +1077,13 @@ def test_best_odds_among_my_books():
                                                     link="https://bovada/over", under_link="https://bovada/under")])
     mine = research.DEFAULT_BOOKS
     v = research.props_view(b, books=mine).set_index("Player")
-    assert v.at["Drake London", "Best Over"] == "+105 FanDuel" and v.at["Drake London", "Over slip"] == "https://fanduel/over"
-    assert v.at["Drake London", "Best Under"] == "-105 DraftKings" and v.at["Drake London", "Under slip"] == "https://draftkings/under"
-    assert research.props_view(b).set_index("Player").at["Drake London", "Best Over"].endswith("Bovada")   # no filter → offshore wins
+    dl, bj, kp = v.loc["Drake London"], v.loc["Bijan Robinson"], v.loc["Kyle Pitts"]
+    assert (dl.Bet, dl["Bet odds"], dl["Best book"], dl["Bet slip"]) == ("Over 74.5", 105, "FanDuel", "https://fanduel/over")
+    assert (bj.Bet, bj["Bet odds"], bj["Best book"], bj["Bet slip"]) == ("Under 80.5", -108, "FanDuel", "https://fanduel/under")
+    assert kp.Bet == "" and pd.isna(kp["Bet slip"]) and pd.isna(kp["Bet odds"])          # no lean → no slip
+    assert research.props_view(b).set_index("Player").at["Drake London", "Best book"] == "Bovada"   # no filter → offshore wins
+    one = research.props_view(b, book="DraftKings").set_index("Player")                  # one book: its own price and slip
+    assert one.at["Bijan Robinson", "Bet odds"] == -110 and one.at["Bijan Robinson", "Bet slip"] == "https://draftkings/under"
     p = research.midweek_picks(b, None, min_diff=4, sides=None, books=mine)
     assert set(p.book) == {"fanduel"}
     gp = pd.DataFrame({"Game": ["CHI @ ATL"] * 4, "Bet type": ["Spread", "Spread", "Total", "Moneyline"],
@@ -1106,3 +1110,33 @@ def test_best_price_tie_prefers_a_book_with_a_slip():
     from beatnfl import research
     r = pd.DataFrame({"book": ["williamhill_us", "draftkings"], "price": [-110, -110], "link": [None, "https://dk/x"]})
     assert research._best(r, "price", "link") == (-110.0, "draftkings", "https://dk/x")
+
+
+
+def test_parlay_pricing_and_slips():
+    from beatnfl import parlay, research
+    b = _board_rows()
+    b["link"] = [f"https://{bk}/over/{p}" for bk, p in zip(b.book, b.player)]
+    b["under_link"] = [f"https://{bk}/under/{p}" for bk, p in zip(b.book, b.player)]
+    dl = parlay.prop_leg(b, "CHI @ ATL|Drake London|rec_yds", "Over")
+    bj = parlay.prop_leg(b, "CHI @ ATL|Bijan Robinson|rush_yds", "Under")
+    gl = parlay.game_leg({"Game": "KC @ DEN", "Bet type": "Spread", "Side": "DEN +3.5", "Model %": 55.0, "Market %": 50.0},
+                         pd.DataFrame([dict(home="DEN", away="KC", book="draftkings", market="spreads", side="DEN", line=3.5,
+                                            price=-110, link="https://draftkings/den"),
+                                       dict(home="DEN", away="KC", book="fanduel", market="spreads", side="DEN", line=3.5,
+                                            price=-105, link="https://fanduel/den")]))
+    legs = [dl, bj, gl]
+    t = parlay.legs_table(legs)
+    assert list(t.Side) == ["Over", "Under", "Bet"] and t["Model %"].tolist() == [63.0, 62.0, 55.0]
+    pr = parlay.price(legs, research.DEFAULT_BOOKS).set_index("book")
+    # FanDuel: +105 (2.05) × -108 (1.9259) × -105 (1.9524) = 7.708
+    dec = 2.05 * (1 + 100 / 108) * (1 + 100 / 105)
+    assert pr.at["fanduel", "Pays on $10"] == round(10 * dec, 2) and pr.index[0] == "fanduel"
+    assert pr.at["betmgm", "Legs offered"] == "1 of 3" and pd.isna(pr.at["betmgm", "Parlay odds"])
+    assert abs(pr.at["fanduel", "Model chance %"] - round(100 * .63 * .62 * .55, 1)) < 1e-9
+    sl = parlay.slips(legs, "fanduel")
+    assert sl.Slip.tolist() == ["https://fanduel/over/Drake London", "https://fanduel/under/Bijan Robinson", "https://fanduel/den"]
+    bj["side"] = "Over"                                                          # switching side uses the other prices
+    assert parlay.slips([bj], "draftkings").Odds.tolist() == [-110] and parlay.leg_probs(bj)[0] == 0.38
+    assert parlay.same_game(legs) == ["CHI @ ATL"]
+    assert parlay.american(2.5) == 150 and parlay.american(1.5) == -200

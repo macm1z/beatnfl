@@ -134,9 +134,11 @@ def test_research_all_sources(live):
     dkb = board[board.book == "draftkings"]
     assert dkb.link.notna().all() and dkb[dkb.stat != "any_td"].under_link.str.endswith("_Under").all()
     pv = research.props_view(board)
-    assert pv["Over slip"].notna().all() and pv["Over slip"].str.contains("draftkings").all()
+    lean = pv.Bet != ""
+    assert (pv[~lean]["Bet slip"].isna()).all()                          # a slip only for the recommended side
+    assert pv[lean]["Bet slip"].dropna().str.contains("draftkings").all()
     pv_c = research.props_view(board, book="Caesars")
-    assert pv_c["Over slip"].isna().all()
+    assert pv_c["Bet slip"].isna().all()
     m = research.matchups(S, W)
     assert len(m) == 2 * live["_n_games"]
     # FantasyPros stat lines mix into props forecasts
@@ -255,6 +257,18 @@ def test_app_every_button(live, monkeypatch):
     from beatnfl import bp_record as _bpr
     assert _bpr.load_result("archive") and _bpr.load_result("snapshots")
     assert any("BettingPros' archive" in m.value for m in at.markdown)
+    # Parlay tab: legs from the props board and a game side, priced per book, with slips; then cleared
+    from beatnfl import parlay as _pl
+    bd = at.session_state["board"]
+    keys = (bd.game + "|" + bd.player + "|" + bd.stat).drop_duplicates().head(2).tolist()
+    legs = [_pl.prop_leg(bd, k, "Under") for k in keys]
+    at.session_state["parlay"] = legs
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("leg parlay" in m.value for m in at.markdown)
+    assert any(w for w in at.warning if "Same-game" in w.value)          # both legs are from the one props game
+    [b for b in at.button if b.label == "Clear parlay"][0].click().run()
+    assert not at.exception and at.session_state["parlay"] == []
     # contest types: each builds; single entry gives best + 2 backups, multi-entry the full set
     for ct, n in (("cash", 3), ("multi", None), ("se", 3)):
         at.radio(key="contest").set_value(ct).run()

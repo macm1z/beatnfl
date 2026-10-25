@@ -331,6 +331,7 @@ BOOK_NAMES = {"draftkings": "DraftKings", "fanduel": "FanDuel", "betmgm": "BetMG
 STAT_NAMES = {"pass_yds": "Pass yds", "pass_att": "Pass att", "pass_cmp": "Completions", "pass_td": "Pass TDs",
               "rush_yds": "Rush yds", "rush_att": "Rush att", "rec": "Receptions", "rec_yds": "Rec yds", "any_td": "Anytime TD"}
 CONSENSUS = "All books (consensus)"
+GAME_LEAN = 4.0      # Games: a bet slip is offered only where the model's chance is this many points above the market
 # Books licensed in the US states BeatNFL users bet in (offshore books left out). Settings → "My sportsbooks".
 DEFAULT_BOOKS = ["draftkings", "fanduel", "betmgm", "williamhill_us", "fanatics", "espnbet", "betrivers",
                  "hardrockbet", "ballybet", "betparx"]
@@ -356,15 +357,6 @@ def _odds(v) -> str:
     except (TypeError, ValueError):
         return ""
     return f"+{v}" if v > 0 else str(v)
-
-
-def _best_txt(price, bk, best_line, line, stat) -> str:
-    if pd.isna(price):
-        return ""
-    t = f"{_odds(price)} {book_name(bk)}"
-    if stat != "any_td" and pd.notna(best_line) and pd.notna(line) and best_line != line:
-        t += f" (at {best_line:g})"
-    return t
 
 
 def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, sort: str = "Biggest difference",
@@ -422,6 +414,27 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
             return "—"
         side = "Over" if diff[i] > 0 else "Under"
         return side + (" ★" if strong[i] else "")
+    # the recommended side only: its best price (all-books view) or this book's price, and its betslip
+    cons = "best_over" in d
+    sides, bet_txt, bet_odds, bet_book, bet_slip = [], [], [], [], []
+    for i in d.index:
+        lab = label(i)
+        side = "Yes" if lab.startswith("Yes") else "Over" if lab.startswith("Over") else "Under" if lab.startswith("Under") else ""
+        sides.append(side)
+        if not side:
+            bet_txt.append(""); bet_odds.append(np.nan); bet_book.append(""); bet_slip.append(None)
+            continue
+        over = side in ("Over", "Yes")
+        ln = d.at[i, "best_line"] if cons and pd.notna(d.at[i, "best_line"]) else d.at[i, "line"]
+        bet_txt.append("Yes — anytime TD" if side == "Yes" else f"{side} {ln:g}")
+        if cons:
+            bet_odds.append(d.at[i, "best_over" if over else "best_under"])
+            bk = d.at[i, "over_book" if over else "under_book"]
+            bet_book.append(book_name(bk) if isinstance(bk, str) and bk else "")
+        else:
+            bet_odds.append(d.at[i, "price" if over else "under_price"])
+            bet_book.append(d.at[i, "Book"])
+        bet_slip.append(odds.bet_link(d.at[i, "link" if over else "under_link"]))
     out = pd.DataFrame({
         "Game": d.game.values,
         "Player": d.player.values,
@@ -433,13 +446,12 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
         "Book %": (d.book_p_over * 100).round(1).values,
         "Difference": diff.round(1).values,
         "Lean": [label(i) for i in d.index],
-        **({"Best Over": [_best_txt(p, bk, ln, l0, sd) for p, bk, ln, l0, sd in
-                          zip(d.best_over, d.over_book, d.best_line, d.line, d.stat)],
-            "Best Under": [("" if sd == "any_td" else _best_txt(p, bk, ln, l0, sd)) for p, bk, ln, l0, sd in
-                           zip(d.best_under, d.under_book, d.best_line, d.line, d.stat)]}
-           if "best_over" in d else {}),
-        "Over slip": [odds.bet_link(x) for x in d.link],
-        "Under slip": [odds.bet_link(x) for x in d.under_link],
+        "Bet": bet_txt,
+        "Bet odds": bet_odds,
+        "Best book": bet_book,
+        "Bet slip": bet_slip,
+        "_key": [f"{a}|{b_}|{c}" for a, b_, c in zip(d.game, d.player, d.stat)],
+        "_side": sides,
         "_diff": diff.abs().values, "_book": d.Book.values,
     })
     if sort == "Sportsbook":

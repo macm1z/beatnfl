@@ -312,8 +312,8 @@ if refresh:
     ss["run_at"] = pd.Timestamp.now(tz=TZ).strftime("%a %-I:%M %p")
     st.rerun()
 
-tab_week, tab_ask, tab_saved, tab_games, tab_props, tab_picks, tab_yahoo, tab_evidence, tab_load, tab_status = st.tabs(
-    ["This week", "Ask", "Saved lineups", "Games", "Props", "Picks", "My Yahoo team", "Evidence", "Load data", "Data status"])
+tab_week, tab_ask, tab_saved, tab_games, tab_props, tab_picks, tab_parlay, tab_yahoo, tab_evidence, tab_load, tab_status = st.tabs(
+    ["This week", "Ask", "Saved lineups", "Games", "Props", "Picks", "Parlay", "My Yahoo team", "Evidence", "Load data", "Data status"])
 
 # ------------------------------------------------------------------ THIS WEEK
 with tab_week:
@@ -742,6 +742,7 @@ with tab_games:
             from beatnfl.sources import odds as _odds_src
             gp = gp.join(research.game_best(gp, raw_all, S.my_books))
             gp["Bet slip"] = research.game_slips(gp, raw) if book_pick else gp["Best slip"]
+            gp.loc[~(gp.Difference >= research.GAME_LEAN), "Bet slip"] = None   # a slip only where the model leans
             gp = gp.drop(columns="Best slip")
             f1, f2, f3 = st.columns(3)
             pg = f1.selectbox("Game", ["All games"] + list(gt.Game), key="games_game")
@@ -757,7 +758,8 @@ with tab_games:
             if v.empty:
                 st.info("Nothing matches these filters.")
             else:
-                show(v, {
+                gsel = st.dataframe(v, hide_index=True, width="stretch", key="games_tbl", on_select="rerun",
+                                    selection_mode="multi-row", column_config={
                     "Odds": st.column_config.NumberColumn("Odds", format="%+d", help="Median American odds across books (or the selected book's)."),
                     "Market %": st.column_config.NumberColumn("Market %", format="%.1f%%",
                                                               help="The sportsbooks' chance for this side with their margin removed."),
@@ -769,9 +771,19 @@ with tab_games:
                     "Best odds": st.column_config.NumberColumn("Best odds", format="%+d",
                                                                help="Highest payout for this side among your sportsbooks (Settings → My sportsbooks), at this line."),
                     "Best book": st.column_config.Column("Best book", help="Where the best odds are. '(at …)' = the most-quoted line, when the line shown is an average."),
-                    "Bet slip": st.column_config.LinkColumn("Bet slip", display_text="Slip ↗", help="Opens the sportsbook selected above (the best-odds book in the all-books view) with this bet added to the betslip. "
+                    "Bet slip": st.column_config.LinkColumn("Bet slip", display_text="Slip ↗", help="Only where the model is 4+ points above the market. Opens the sportsbook selected above (the best-odds book in the all-books view) with this bet added to the betslip. "
                                                      "You review and place it in the book yourself — BeatNFL never places bets.")},
                      height=min(700, 38 + 35 * len(v)))
+                gpk = v.iloc[gsel.selection.rows] if gsel and gsel.selection.rows else v.iloc[0:0]
+                if st.button(f"➕ Add {len(gpk)} to parlay" if len(gpk) else "➕ Add to parlay", disabled=gpk.empty,
+                             key="games_to_parlay", help="Tick rows (left edge) first."):
+                    from beatnfl import parlay as _pl
+                    pl_ = ss.setdefault("parlay", [])
+                    for r_ in gpk.to_dict("records"):
+                        leg_ = _pl.game_leg(r_, raw_all)
+                        if leg_["id"] not in {x["id"] for x in pl_}:
+                            pl_.append(leg_)
+                    st.success(f"Parlay has {len(pl_)} legs — open the **Parlay** tab.")
                 st.caption("Spread, moneyline and total each have their own chance. Differences of a couple of points "
                            "are within normal noise. Click any column header to sort.")
     except StepError as e:
@@ -910,21 +922,35 @@ with tab_props:
             if view.empty:
                 st.info("No props match these filters.")
             else:
-                show(view, {
-                    "Odds": st.column_config.NumberColumn("Odds", format="%+d"),
+                sel = st.dataframe(view, hide_index=True, width="stretch", key="props_tbl", on_select="rerun",
+                                   selection_mode="multi-row", column_config={
+                    "Odds": st.column_config.NumberColumn("Odds", format="%+d", help="Over (or Yes) price — median across books, or this book's."),
                     "Model median": st.column_config.NumberColumn("Model median", format="%.1f",
                                                                   help="The model's most likely result, corrected for how its past forecasts missed."),
                     "Model %": st.column_config.NumberColumn("Model %", format="%.0f%%", help="Model's chance of the Over (or Yes)."),
                     "Book %": st.column_config.NumberColumn("Book %", format="%.0f%%", help="The book's chance of the Over (or Yes) with its margin removed."),
                     "Difference": st.column_config.NumberColumn("Difference", format="%+.1f", help="Model % − Book %, in percentage points."),
-                    "Lean": st.column_config.Column("Lean", help="Model differs by 4+ points (★ = 8+)."),
-                    "Best Over": st.column_config.Column("Best Over", help="Best Over (or Yes) price among your sportsbooks at the most-quoted line."),
-                    "Best Under": st.column_config.Column("Best Under", help="Best Under price among your sportsbooks at the most-quoted line."),
-                    "Over slip": st.column_config.LinkColumn("Over slip", display_text="Over ↗", help="Opens the book with the best Over price (in the all-books view) with this bet added to the betslip. "
-                                                     "You review and place it in the book yourself — BeatNFL never places bets."),
-                    "Under slip": st.column_config.LinkColumn("Under slip", display_text="Under ↗", help="Opens the book with the best Under price (in the all-books view) with this bet added to the betslip. "
-                                                     "You review and place it in the book yourself — BeatNFL never places bets.")},
-                     height=min(700, 38 + 35 * len(view)))
+                    "Lean": st.column_config.Column("Lean", help="Model differs by 4+ points (★ = 8+). No lean = no bet suggested."),
+                    "Bet": st.column_config.Column("Bet", help="The side the model leans to (blank when it doesn't differ enough from the book)."),
+                    "Bet odds": st.column_config.NumberColumn("Bet odds", format="%+d",
+                                                              help="Best price for that side among your sportsbooks (all-books view) or this book's price."),
+                    "Best book": st.column_config.Column("Best book", help="Where that price is."),
+                    "Bet slip": st.column_config.LinkColumn("Bet slip", display_text="Slip ↗", help="Opens the book with this bet added to the betslip. You review and place it in the book yourself — BeatNFL never places bets."),
+                    "_key": None, "_side": None},
+                    height=min(700, 38 + 35 * len(view)))
+                picked = view.iloc[sel.selection.rows] if sel and sel.selection.rows else view.iloc[0:0]
+                a1, a2 = st.columns([1.3, 3], vertical_alignment="center")
+                if a1.button(f"➕ Add {len(picked)} to parlay" if len(picked) else "➕ Add to parlay",
+                             disabled=picked.empty, key="props_to_parlay"):
+                    from beatnfl import parlay as _pl
+                    pl_ = ss.setdefault("parlay", [])
+                    for r_ in picked.itertuples():
+                        leg_ = _pl.prop_leg(b, r_._key, r_._side or "Over")
+                        if leg_ and leg_["id"] not in {x["id"] for x in pl_}:
+                            pl_.append(leg_)
+                    st.success(f"Parlay has {len(pl_)} legs — open the **Parlay** tab.")
+                a2.caption("Tick rows (left edge) to add them to a parlay. Props without a lean are added as Over — "
+                           "switch the side on the Parlay tab.")
             st.caption("\\* Anytime TD is quoted on one side only, so its Book % still includes the margin and runs high. "
                        "**no forecast** = player ruled out or too little history. Click any column header to sort. "
                        "Information only.")
@@ -1631,3 +1657,67 @@ with tab_ask:
                 stt_.update(label="Couldn't answer", state="error")
                 hist.append({"q": q_, "a": "⚠️ " + e.as_text(), "tools": [], "cost": None, "built": None})
         st.rerun()
+
+
+# ------------------------------------------------------------------ PARLAY
+with tab_parlay:
+    from beatnfl import parlay as _pl
+    st.caption("Build a parlay from **Props** and **Games**: tick rows there and click **➕ Add to parlay**. Information only — "
+               "you place it in the sportsbook yourself.")
+    legs = ss.setdefault("parlay", [])
+    if not legs:
+        st.info("No legs yet. On **Props** or **Games**, tick the rows you want (left edge of the table) and click "
+                "**➕ Add to parlay**.")
+    else:
+        lt = _pl.legs_table(legs)
+        lt.insert(0, "Remove", False)
+        ed = st.data_editor(lt, hide_index=True, width="stretch", key=f"parlay_ed_{ss.get('parlay_v', 0)}",
+                            disabled=["Leg", "Game", "Model %", "Market %", "Books"], column_config={
+            "Side": st.column_config.SelectboxColumn("Side", options=["Over", "Under", "Yes", "Bet"],
+                                                     help="Switch a prop between Over and Under (anytime TD is Yes only; game legs are fixed)."),
+            "Model %": st.column_config.NumberColumn("Model %", format="%.0f%%", help="BeatNFL's chance for this leg."),
+            "Market %": st.column_config.NumberColumn("Market %", format="%.0f%%", help="The books' chance with their margin removed."),
+            "Books": st.column_config.NumberColumn("Books", help="How many sportsbooks offer this leg at this line.")})
+        changed = False
+        for lg, r_ in zip(list(legs), ed.to_dict("records")):
+            if lg["kind"] == "prop" and lg["stat"] != "any_td" and r_["Side"] in ("Over", "Under") and r_["Side"] != lg["side"]:
+                lg["side"], changed = r_["Side"], True
+        if ed.Remove.any():
+            ss["parlay"] = legs = [lg for lg, rm in zip(legs, ed.Remove) if not rm]
+            changed = True
+        if changed:
+            ss["parlay_v"] = ss.get("parlay_v", 0) + 1
+            st.rerun()
+        sg = _pl.same_game(legs)
+        if sg:
+            st.warning("Same-game legs (" + ", ".join(sg) + "): these results move together, and books price same-game "
+                       "parlays with their own adjustment — the odds below are a guide; the book's betslip shows the real price.")
+        pr = _pl.price(legs, S.my_books)
+        if pr.empty:
+            st.info("None of your sportsbooks offer these legs.")
+        else:
+            st.markdown(f"**{len(legs)}-leg parlay at your sportsbooks** (best first)")
+            show(pr.drop(columns="book"), {
+                "Parlay odds": st.column_config.NumberColumn("Parlay odds", format="%+d", help="All legs' odds multiplied (independent legs)."),
+                "Pays on $10": st.column_config.NumberColumn("Pays on $10", format="$%.2f", help="Total return on a $10 bet, stake included."),
+                "Market chance %": st.column_config.NumberColumn("Market chance %", format="%.1f%%",
+                                                                 help="Chance all legs win, from the books' own no-vig prices."),
+                "Model chance %": st.column_config.NumberColumn("Model chance %", format="%.1f%%", help="Chance all legs win by BeatNFL's numbers."),
+                "Value vs market %": st.column_config.NumberColumn("Value vs market %", format="%+.1f%%",
+                                                                   help="Expected return of these odds at the market's own chance. Negative = the book's margin, which grows with every leg."),
+                "Value vs model %": st.column_config.NumberColumn("Value vs model %", format="%+.1f%%",
+                                                                  help="Expected return at BeatNFL's chances. The model has no proven edge on props or games (Evidence).")})
+            full = pr[pr["Parlay odds"].notna()]
+            choices = list(full.book) or list(pr.book)
+            bk = st.selectbox("Place at", choices, format_func=lambda k: _pl.book_name(k), key="parlay_book")
+            sl = _pl.slips(legs, bk)
+            show(sl, {"Odds": st.column_config.NumberColumn("Odds", format="%+d"),
+                      "Slip": st.column_config.LinkColumn("Slip", display_text="Add ↗",
+                                                          help="Opens the book with this leg added to its betslip.")})
+            st.caption(f"Open each leg's **Add ↗** in order — they collect in {_pl.book_name(bk)}'s betslip — then choose "
+                       "**Parlay** there, check the price and place it yourself. A blank slip = this book gives no link for "
+                       "that leg (or doesn't offer it); add it in the book directly. Each extra leg adds the book's margin "
+                       "again, so parlays cost more than the same bets placed singly.")
+        if st.button("Clear parlay", key="parlay_clear"):
+            ss["parlay"], ss["parlay_v"] = [], ss.get("parlay_v", 0) + 1
+            st.rerun()
