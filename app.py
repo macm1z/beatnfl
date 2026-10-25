@@ -1196,9 +1196,10 @@ with tab_yahoo:
             S.yahoo_redirect_uri = ru.strip() or yahoo.DEFAULT_REDIRECT
             S.save()
         st.link_button("1 · Sign in to Yahoo and approve", yahoo.auth_url(S.yahoo_client_id, S.yahoo_redirect_uri))
-        st.caption("After you approve, Yahoo " + ("shows a code." if S.yahoo_redirect_uri == "oob" else
-                   f"sends your browser to {S.yahoo_redirect_uri}/?code=… — that page won't load, which is expected. "
-                   "Copy the **whole address** from the address bar."))
+        st.caption("Click the button above (not any address in this text). After you approve on Yahoo, it " +
+                   ("shows a code." if S.yahoo_redirect_uri == "oob" else
+                    "opens a page that won't load — that's expected. Its address starts with `localhost:8000/?code=` "
+                    "followed by a long code of letters and numbers. Copy the **whole address** from the address bar."))
         code = st.text_input("2 · Paste the code or the whole address here", key="yahoo_code")
         if st.button("Connect", disabled=not code.strip()):
             try:

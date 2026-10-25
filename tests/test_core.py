@@ -1260,3 +1260,5 @@ def test_yahoo_redirect_uri_and_pasted_address(monkeypatch, tmp_path):
     with pytest.raises(StepError) as e:
         yahoo.connect("cid", "sec", "https://localhost:8000/?error=access_denied", "https://localhost:8000")
     assert "No sign-in code" in e.value.what
+    with pytest.raises(StepError):
+        yahoo.connect("cid", "sec", "https://localhost:8000/?code=%E2%80%A6", "https://localhost:8000")   # the "…" placeholder

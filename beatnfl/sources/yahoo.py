@@ -88,7 +88,7 @@ def connect(client_id: str, secret: str, code: str, redirect_uri: str = DEFAULT_
     _need(client_id, secret)
     ru = (redirect_uri or DEFAULT_REDIRECT).strip()
     code = extract_code(code)
-    if not code or code.startswith("http"):
+    if not code or code.startswith("http") or len(code) < 4 or not any(ch.isalnum() for ch in code):
         raise StepError(STEP, "No sign-in code found in what was pasted.", "",
                         "After approving on Yahoo, copy the whole address from the browser's address bar "
                         "(it contains ?code=…) and paste it here.")
