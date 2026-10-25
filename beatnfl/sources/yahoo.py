@@ -2,9 +2,12 @@
 
 One-time setup (in the app's My Yahoo team tab):
   1. Create an app at https://developer.yahoo.com/apps/create/
-       Application type: Installed Application · Redirect URI: oob · API permissions: Fantasy Sports → Read
+       Redirect URI: https://localhost:8000 · API permissions: Fantasy Sports → Read
   2. Paste the Client ID and Client Secret into Settings.
-  3. Click the sign-in link, approve, and paste the code Yahoo shows back into the app.
+  3. Click the sign-in link and approve. Yahoo then sends the browser to https://localhost:8000/?code=…
+     (the page itself won't load — that's expected); copy the whole address and paste it into the app.
+The Redirect URI the app sends must match the one in your Yahoo app EXACTLY, or Yahoo shows
+"Something went wrong" — it is set on the My Yahoo team tab (older apps made with "oob" keep working).
 
 Tokens are stored only in ~/BeatNFL/yahoo_token.json (owner-only permissions) and refresh
 automatically. Nothing here can change a lineup — the app only asks Yahoo for read access.
@@ -15,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
@@ -28,6 +31,7 @@ AUTH = "https://api.login.yahoo.com/oauth2/request_auth"
 TOKEN = "https://api.login.yahoo.com/oauth2/get_token"
 API = "https://fantasysports.yahooapis.com/fantasy/v2"
 TOKEN_PATH = HOME / "yahoo_token.json"
+DEFAULT_REDIRECT = "https://localhost:8000"
 YAHOO_TEAM = {"JAC": "JAX", "WSH": "WAS", "LAR": "LA", "KAN": "KC", "SFO": "SF", "GNB": "GB", "NOR": "NO", "TAM": "TB"}
 
 
@@ -35,12 +39,24 @@ def _need(client_id: str, secret: str):
     if not client_id or not secret:
         raise StepError(STEP, "Yahoo keys are not set.",
                         "The app needs your Yahoo app's Client ID and Client Secret to read your league.",
-                        "Create an app at developer.yahoo.com/apps/create (Installed Application, Redirect URI 'oob', "
+                        "Create an app at developer.yahoo.com/apps/create (Redirect URI https://localhost:8000, "
                         "Fantasy Sports: Read), then paste both values into Settings.")
 
 
-def auth_url(client_id: str) -> str:
-    return AUTH + "?" + urlencode({"client_id": client_id, "redirect_uri": "oob", "response_type": "code", "language": "en-us"})
+def auth_url(client_id: str, redirect_uri: str = DEFAULT_REDIRECT) -> str:
+    return AUTH + "?" + urlencode({"client_id": client_id.strip(), "redirect_uri": (redirect_uri or DEFAULT_REDIRECT).strip(),
+                                   "response_type": "code", "language": "en-us"})
+
+
+def extract_code(pasted: str) -> str:
+    """The authorization code from whatever was pasted: the code itself, or the whole address Yahoo
+    redirected to (https://localhost:8000/?code=abc…)."""
+    t = (pasted or "").strip()
+    if "code=" in t:
+        q = parse_qs(urlparse(t if "://" in t else "https://x/?" + t.split("?", 1)[-1]).query)
+        if q.get("code"):
+            return q["code"][0].strip()
+    return t
 
 
 def _save(tok: dict):
@@ -68,9 +84,16 @@ def _token_request(client_id: str, secret: str, data: dict) -> dict:
     return r.json()
 
 
-def connect(client_id: str, secret: str, code: str) -> None:
+def connect(client_id: str, secret: str, code: str, redirect_uri: str = DEFAULT_REDIRECT) -> None:
     _need(client_id, secret)
-    tok = _token_request(client_id, secret, {"grant_type": "authorization_code", "redirect_uri": "oob", "code": code.strip()})
+    ru = (redirect_uri or DEFAULT_REDIRECT).strip()
+    code = extract_code(code)
+    if not code or code.startswith("http"):
+        raise StepError(STEP, "No sign-in code found in what was pasted.", "",
+                        "After approving on Yahoo, copy the whole address from the browser's address bar "
+                        "(it contains ?code=…) and paste it here.")
+    tok = _token_request(client_id.strip(), secret.strip(), {"grant_type": "authorization_code", "redirect_uri": ru, "code": code})
+    tok["redirect_uri"] = ru
     _save(tok)
 
 
@@ -88,9 +111,10 @@ def _access(client_id: str, secret: str) -> str:
         raise StepError(STEP, "Yahoo is not connected yet.", "", "Use the sign-in link in the My Yahoo team tab.")
     tok = json.loads(TOKEN_PATH.read_text())
     if time.time() - tok.get("obtained_at", 0) > tok.get("expires_in", 3600) - 120:
-        new = _token_request(client_id, secret, {"grant_type": "refresh_token", "redirect_uri": "oob",
+        new = _token_request(client_id, secret, {"grant_type": "refresh_token", "redirect_uri": tok.get("redirect_uri", "oob"),
                                                  "refresh_token": tok["refresh_token"]})
         new.setdefault("refresh_token", tok["refresh_token"])
+        new.setdefault("redirect_uri", tok.get("redirect_uri", "oob"))
         _save(new)
         tok = new
     return tok["access_token"]

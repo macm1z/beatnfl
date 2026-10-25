@@ -40,6 +40,7 @@ class Settings:
     stat_weights: dict = field(default_factory=dict)
     my_books: list = field(default_factory=lambda: ["draftkings", "fanduel", "betmgm", "williamhill_us", "fanatics",
                                                     "espnbet", "betrivers", "hardrockbet", "ballybet", "betparx"])
+    yahoo_redirect_uri: str = "https://localhost:8000"   # must match the Redirect URI in your Yahoo app exactly
     bettingpros_api_key: str = ""   # BettingPros Consumer API (personal use; follows your membership)
     anthropic_api_key: str = ""     # Ask tab (platform.claude.com/settings/keys); billed per use by Anthropic
     ask_model: str = "claude-sonnet-5-5"

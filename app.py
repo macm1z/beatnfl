@@ -1185,15 +1185,24 @@ with tab_yahoo:
         st.markdown(
             "**One-time setup**\n\n"
             "1. Go to [developer.yahoo.com/apps/create](https://developer.yahoo.com/apps/create/) and sign in.\n"
-            "2. Application type **Installed Application**, Redirect URI **oob**, API permissions **Fantasy Sports → Read**. Create the app.\n"
+            "2. Redirect URI **https://localhost:8000**, API permissions **Fantasy Sports → Read**. Create the app.\n"
             "3. Copy the **Client ID** and **Client Secret** into *Settings* in the sidebar and click **Save settings**.")
     elif not yahoo.connected():
         st.markdown("**Connect your Yahoo account**")
-        st.link_button("1 · Sign in to Yahoo and approve", yahoo.auth_url(S.yahoo_client_id))
-        code = st.text_input("2 · Paste the code Yahoo shows you", key="yahoo_code")
+        ru = st.text_input("Redirect URI — must match your Yahoo app exactly", S.yahoo_redirect_uri, key="yahoo_ru",
+                           help="Open developer.yahoo.com/apps → your app and copy its Redirect URI here. If Yahoo says "
+                                "'Something went wrong', these two don't match (or the Client ID is wrong).")
+        if ru.strip() != S.yahoo_redirect_uri:
+            S.yahoo_redirect_uri = ru.strip() or yahoo.DEFAULT_REDIRECT
+            S.save()
+        st.link_button("1 · Sign in to Yahoo and approve", yahoo.auth_url(S.yahoo_client_id, S.yahoo_redirect_uri))
+        st.caption("After you approve, Yahoo " + ("shows a code." if S.yahoo_redirect_uri == "oob" else
+                   f"sends your browser to {S.yahoo_redirect_uri}/?code=… — that page won't load, which is expected. "
+                   "Copy the **whole address** from the address bar."))
+        code = st.text_input("2 · Paste the code or the whole address here", key="yahoo_code")
         if st.button("Connect", disabled=not code.strip()):
             try:
-                yahoo.connect(S.yahoo_client_id, S.yahoo_client_secret, code)
+                yahoo.connect(S.yahoo_client_id, S.yahoo_client_secret, code, S.yahoo_redirect_uri)
                 st.success("Connected to Yahoo.")
                 st.rerun()
             except StepError as e:

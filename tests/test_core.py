@@ -1236,3 +1236,27 @@ def test_parlay_uses_each_books_nearest_line_and_says_so():
     assert pr.at["betrivers", "Different line"] == "Drake London at 75.5" and pr.at["draftkings", "Different line"] == ""
     assert "this book: 75.5" in parlay.slips([lg], "betrivers").Leg.iloc[0]
     assert parlay.best(parlay.price([lg], ["betmgm_only_not_listed"])) is None
+
+
+def test_yahoo_redirect_uri_and_pasted_address(monkeypatch, tmp_path):
+    from urllib.parse import parse_qs, urlparse
+    from beatnfl.sources import yahoo
+    u = yahoo.auth_url(" cid ", "https://localhost:8000")
+    q = parse_qs(urlparse(u).query)
+    assert q["redirect_uri"] == ["https://localhost:8000"] and q["client_id"] == ["cid"]
+    assert parse_qs(urlparse(yahoo.auth_url("cid", "oob")).query)["redirect_uri"] == ["oob"]
+    assert yahoo.extract_code("https://localhost:8000/?code=abc123&state=x") == "abc123"
+    assert yahoo.extract_code("  abc123 ") == "abc123"
+    sent = []
+
+    class R:
+        status_code = 200
+        def json(self): return {"access_token": "A", "refresh_token": "R", "expires_in": 3600}
+    monkeypatch.setattr(yahoo, "TOKEN_PATH", tmp_path / "t.json")
+    monkeypatch.setattr(yahoo.requests, "post", lambda url, data=None, auth=None, timeout=None: sent.append(data) or R())
+    yahoo.connect("cid", "sec", "https://localhost:8000/?code=xyz", "https://localhost:8000")
+    assert sent[-1]["code"] == "xyz" and sent[-1]["redirect_uri"] == "https://localhost:8000"
+    assert json.loads((tmp_path / "t.json").read_text())["redirect_uri"] == "https://localhost:8000"
+    with pytest.raises(StepError) as e:
+        yahoo.connect("cid", "sec", "https://localhost:8000/?error=access_denied", "https://localhost:8000")
+    assert "No sign-in code" in e.value.what

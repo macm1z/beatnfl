@@ -74,7 +74,7 @@ Tabs: **This week** (pool and lineups) · **Ask** (questions in plain English, a
 
 **Props backtest on real lines (paid Odds API plan):** *Evidence → Props on real sportsbook lines* replays a past season with the model as it stood before that season, using each prop's real Wednesday-evening and closing prices from every US book. It reports the Picks rule's record, ROI and closing-line value at 4/6/8/10-point thresholds. 2025 with pass/rush/receiving yards costs about 16,000 credits; a credit floor (default 4,000) pauses it before weekly use is starved, and a paused run resumes later without paying twice. Credits left show under Settings. CLI: `python -m beatnfl backtest-props --season 2025`.
 
-**Yahoo (optional, read-only):** the **My Yahoo team** tab walks through a one-time setup. Create a Yahoo app with Redirect URI `oob` and Fantasy Sports Read access, paste the keys in Settings, sign in, then paste the code Yahoo shows you. After that:
+**Yahoo (optional, read-only):** the **My Yahoo team** tab walks through a one-time setup. Create a Yahoo app with Redirect URI `https://localhost:8000` and Fantasy Sports Read access, paste the keys in Settings, sign in, and after approving copy the whole address the browser lands on (`https://localhost:8000/?code=…` — the page itself won't load, that's expected) into the app. The Redirect URI on the tab must match the one in your Yahoo app exactly; if Yahoo says "Something went wrong", they don't match or the Client ID is wrong. After that:
 - My Yahoo team shows your roster with projections and start/sit suggestions.
 - Yahoo's injury tags join DraftKings' and Sleeper's in every run; the most serious status wins.
 - Research adds % rostered on Yahoo.
