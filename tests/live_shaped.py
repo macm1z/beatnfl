@@ -121,6 +121,12 @@ def build(stats: pd.DataFrame, sched: pd.DataFrame, slate_csv: Path, season: int
                     {"name": "Over", "price": -110, "point": tot}, {"name": "Under", "price": -110, "point": tot}]},
                 {"key": "h2h", "last_update": "2026-10-12T21:00:00Z", "outcomes": [
                     {"name": ODDS_NAME[g.home_team], "price": -150}, {"name": ODDS_NAME[g.away_team], "price": 130}]}]})
+        # DraftKings gives deep links (bookmaker event page + per-outcome betslip), as includeLinks=true returns
+        dk = books[0]
+        dk["link"] = f"https://sportsbook.draftkings.com/event/{ev['id']}"
+        for m in dk["markets"]:
+            m["outcomes"] = [{**o, "link": f"https://sportsbook.draftkings.com/event/{ev['id']}?outcomes={m['key']}_{o['name'].replace(' ', '')}"}
+                             for o in m["outcomes"]]
         odds.append({**ev, "bookmakers": books})
     # props for one slate game, using the real top players of its two teams
     slate_teams = set(sal.TeamAbbrev.replace({"LAR": "LA"}))
@@ -140,7 +146,11 @@ def build(stats: pd.DataFrame, sched: pd.DataFrame, slate_csv: Path, season: int
             {"name": "Under", "description": name, "price": -105, "point": line}]})
     pr.append({"key": "player_anytime_td", "last_update": "2026-10-12T21:00:00Z",
                "outcomes": [{"name": "Yes", "description": rb, "price": -150}]})
-    props = {**g0, "bookmakers": [{"key": "draftkings", "title": "DraftKings", "markets": pr},
+    pr_dk = [{**m, "outcomes": [{**o, "link": f"https://sportsbook.draftkings.com/event/{g0['id']}?outcomes="
+                                             f"{m['key']}_{o['description'].replace(' ', '')}_{o['name']}"}
+                                for o in m["outcomes"]]} for m in pr]
+    props = {**g0, "bookmakers": [{"key": "draftkings", "title": "DraftKings", "markets": pr_dk,
+                                   "link": f"https://sportsbook.draftkings.com/event/{g0['id']}"},
                                   {"key": "williamhill_us", "title": "Caesars", "markets": pr},
                                   {"key": "fanatics", "title": "Fanatics", "markets": [m for m in pr if m["key"] == "player_anytime_td"]}]}
     # FantasyPros API: one payload per position, field names as recorded from the live API

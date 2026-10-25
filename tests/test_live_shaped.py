@@ -126,6 +126,17 @@ def test_research_all_sources(live):
     assert set(gp["Bet type"]) == {"Spread", "Moneyline", "Total"} and gp["Market %"].between(1, 99).all()
     board, info = research.props_board("k", S, W, fc, pm, research.CORE_PROP_MARKETS)
     assert len(board) >= 5 and board.model_p_over.notna().sum() >= 4
+    # deep links: game sides from DraftKings, and props (Over/Under slips; consensus view uses DraftKings)
+    assert raw[raw.book == "draftkings"].link.str.contains("outcomes=").all() and raw[raw.book == "fanduel"].link.isna().all()
+    slips = research.game_slips(gp, raw[raw.book == "draftkings"])
+    assert all(isinstance(x, str) and "draftkings" in x for x in slips)
+    assert research.game_slips(gp, raw[raw.book == "fanduel"]) == [None] * len(gp)
+    dkb = board[board.book == "draftkings"]
+    assert dkb.link.notna().all() and dkb[dkb.stat != "any_td"].under_link.str.endswith("_Under").all()
+    pv = research.props_view(board)
+    assert pv["Over slip"].notna().all() and pv["Over slip"].str.contains("draftkings").all()
+    pv_c = research.props_view(board, book="Caesars")
+    assert pv_c["Over slip"].isna().all()
     m = research.matchups(S, W)
     assert len(m) == 2 * live["_n_games"]
     # FantasyPros stat lines mix into props forecasts

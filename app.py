@@ -681,6 +681,7 @@ with tab_games:
         if raw_all.retrieved_stale.any():
             st.warning("Live lines couldn't be refreshed just now — these are the last ones downloaded. Check your "
                        "Odds API credits (Settings) and connection.")
+    from beatnfl.sources import odds as _odds_src
     try:
         gt = research.games_table(season, week, raw, offline=offline)
         if gt.empty:
@@ -722,11 +723,18 @@ with tab_games:
                                 "Moneyline": " · ".join(f"{t} {_o(ml_.at[t, 'price'])}" for t in (a_, h_) if t in ml_.index),
                                 "Total": (f"{to_.at['Over', 'line']:g} (o {_o(to_.at['Over', 'price'])} / u "
                                           f"{_o(to_.at['Under', 'price']) if 'Under' in to_.index else ''})" if "Over" in to_.index else ""),
-                                "Updated": ts_.tz_convert(TZ).strftime("%a %-I:%M %p") if pd.notna(ts_) else ""})
-                        st.dataframe(pd.DataFrame(out_), hide_index=True, width="stretch")
+                                "Updated": ts_.tz_convert(TZ).strftime("%a %-I:%M %p") if pd.notna(ts_) else "",
+                                "Open": _odds_src.bet_link(next((x for x in g_.get("event_link", pd.Series(dtype=object))
+                                                                 if isinstance(x, str)), None))})
+                        st.dataframe(pd.DataFrame(out_), hide_index=True, width="stretch", column_config={
+                            "Open": st.column_config.LinkColumn("Open", display_text="Open ↗",
+                                                                help="This game on the sportsbook's site.")})
 
             st.subheader("Chances: market vs model")
             gp = research.game_probs(season, week, raw, offline=offline)
+            from beatnfl.sources import odds as _odds_src
+            _slip_raw = raw if book_pick else (raw_all[raw_all.book == "draftkings"] if raw_all is not None and not raw_all.empty else None)
+            gp["Bet slip"] = research.game_slips(gp, _slip_raw)
             f1, f2, f3 = st.columns(3)
             pg = f1.selectbox("Game", ["All games"] + list(gt.Game), key="games_game")
             pt = f2.selectbox("Bet type", ["All", "Spread", "Moneyline", "Total"], key="games_type")
@@ -749,7 +757,9 @@ with tab_games:
                                                              help="Market chance moved by how far BeatNFL's game model sits from the line "
                                                                   "(model weighted 25%, market 75%, because the model alone hasn't beaten closing lines)."),
                     "Difference": st.column_config.NumberColumn("Difference", format="%+.1f",
-                                                                help="Model % − Market %, in percentage points. Click a column header to sort.")},
+                                                                help="Model % − Market %, in percentage points. Click a column header to sort."),
+                    "Bet slip": st.column_config.LinkColumn("Bet slip", display_text="Slip ↗", help="Opens the sportsbook selected above (DraftKings in the all-books view) with this bet added to the betslip. "
+                                                     "You review and place it in the book yourself — BeatNFL never places bets.")},
                      height=min(700, 38 + 35 * len(v)))
                 st.caption("Spread, moneyline and total each have their own chance. Differences of a couple of points "
                            "are within normal noise. Click any column header to sort.")
@@ -896,7 +906,11 @@ with tab_props:
                     "Model %": st.column_config.NumberColumn("Model %", format="%.0f%%", help="Model's chance of the Over (or Yes)."),
                     "Book %": st.column_config.NumberColumn("Book %", format="%.0f%%", help="The book's chance of the Over (or Yes) with its margin removed."),
                     "Difference": st.column_config.NumberColumn("Difference", format="%+.1f", help="Model % − Book %, in percentage points."),
-                    "Lean": st.column_config.Column("Lean", help="Model differs by 4+ points (★ = 8+).")},
+                    "Lean": st.column_config.Column("Lean", help="Model differs by 4+ points (★ = 8+)."),
+                    "Over slip": st.column_config.LinkColumn("Over slip", display_text="Over ↗", help="Opens the book (DraftKings in the all-books view — its line can differ by a half point; pick a sportsbook above for its exact line) with this bet added to the betslip. "
+                                                     "You review and place it in the book yourself — BeatNFL never places bets."),
+                    "Under slip": st.column_config.LinkColumn("Under slip", display_text="Under ↗", help="Opens the book (DraftKings in the all-books view) with this bet added to the betslip. "
+                                                     "You review and place it in the book yourself — BeatNFL never places bets.")},
                      height=min(700, 38 + 35 * len(view)))
             st.caption("\\* Anytime TD is quoted on one side only, so its Book % still includes the margin and runs high. "
                        "**no forecast** = player ruled out or too little history. Click any column header to sort. "
@@ -1008,7 +1022,9 @@ with tab_picks:
                 "FantasyPros": st.column_config.NumberColumn("FantasyPros", format="%.1f", help="FantasyPros' projection for the stat (TD: chance 0–1)."),
                 "Model median": st.column_config.NumberColumn("Model median", format="%.1f"),
                 "Edge at best price %": st.column_config.NumberColumn("Edge at best price %", format="%+.1f",
-                    help="What the best price is worth against the market's own fair chance. Positive = this book pays more than the market thinks it should.")},
+                    help="What the best price is worth against the market's own fair chance. Positive = this book pays more than the market thinks it should."),
+                "Bet slip": st.column_config.LinkColumn("Bet slip", display_text="Slip ↗", help="Opens the book with the best price with this bet added to the betslip. "
+                                                     "You review and place it in the book yourself — BeatNFL never places bets.")},
                  height=min(700, 38 + 35 * len(pk_)))
 
     st.subheader("Track record")

@@ -139,6 +139,21 @@ def game_probs(season: int, week: int, raw_lines: pd.DataFrame | None = None, of
     return out
 
 
+def game_slips(gp: pd.DataFrame, raw_book: pd.DataFrame | None) -> list:
+    """Bet-slip link for each row of game_probs from one sportsbook's lines (None where it gives none)."""
+    if raw_book is None or raw_book.empty or "link" not in raw_book or gp.empty:
+        return [None] * len(gp)
+    mk = {"Spread": "spreads", "Moneyline": "h2h", "Total": "totals"}
+    idx = {}
+    for r in raw_book.itertuples():
+        idx.setdefault((f"{r.away} @ {r.home}", r.market, str(r.side)), r.link)
+    out = []
+    for game, bt, sd in zip(gp.Game, gp["Bet type"], gp.Side):
+        side = str(sd).split()[0]                          # "BUF -5.5" / "BUF win" / "Over 47.5"
+        out.append(odds.bet_link(idx.get((game, mk.get(bt), side))))
+    return out
+
+
 def match_props(props: pd.DataFrame, fc: pd.DataFrame, home: str, away: str) -> pd.DataFrame:
     """Attach model forecasts to prop quotes (player names matched within the two teams)."""
     if props.empty:
@@ -188,7 +203,10 @@ def props_board(key: str, season: int, week: int, fc: pd.DataFrame, pm, markets=
     P = pd.concat(rows, ignore_index=True)
     # pair over/under per book+player+market+line
     ov = P[P.side == "Over"]
-    un = P[P.side == "Under"][["book", "market", "player", "line", "price"]].rename(columns={"price": "under_price"})
+    if "link" not in P:
+        P["link"] = None
+    un = P[P.side == "Under"][["book", "market", "player", "line", "price", "link"]].rename(
+        columns={"price": "under_price", "link": "under_link"})
     yes = P[(P.market == "player_anytime_td") & (P.side.isin(["Yes", "Over"]))]
     b = ov.merge(un, on=["book", "market", "player", "line"], how="left")
     b["book_p_over"] = [odds.no_vig(odds.implied_prob(o), odds.implied_prob(u)) if pd.notna(u) else odds.implied_prob(o)
@@ -199,13 +217,14 @@ def props_board(key: str, season: int, week: int, fc: pd.DataFrame, pm, markets=
     b["model_median"] = [(pm.quantiles(s, pr, (0.5,))[0] if s != "any_td" and pd.notna(pr) else np.nan)
                          for s, pr in zip(b.stat, b.model_pred)]
     if not yes.empty and "player_anytime_td" in markets:
-        y = yes.assign(book_p_over=yes.price.map(odds.implied_prob), model_p_over=yes.model_pred, line=0.5, under_price=np.nan)
+        y = yes.assign(book_p_over=yes.price.map(odds.implied_prob), model_p_over=yes.model_pred, line=0.5, under_price=np.nan,
+                       under_link=None)
         b = pd.concat([b[b.market != "player_anytime_td"], y], ignore_index=True)
     b["edge"] = (b.model_p_over - b.book_p_over).round(3)
     b["model_lean"] = np.where(b.edge > 0, "Over", np.where(b.edge < 0, "Under", ""))
     storage.save_quotes(b.rename(columns={}), "prop", season, week, model_version=getattr(pm, "version", ""))
     cols = ["game", "player", "stat", "book", "line", "price", "under_price", "model_pred", "model_median", "book_p_over",
-            "model_p_over", "edge", "model_lean", "source_ts", "event_id", "commence", "market"]
+            "model_p_over", "edge", "model_lean", "source_ts", "event_id", "commence", "market", "link", "under_link"]
     return b[cols].sort_values(["game", "player", "stat", "book"]).reset_index(drop=True), info
 
 
@@ -316,13 +335,22 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
         d = d[d.Book == book]
     if d.empty:
         return pd.DataFrame()
+    for c in ("link", "under_link"):
+        if c not in d:
+            d[c] = None
     td = d.stat == "any_td"
     if book == CONSENSUS:
+        # slips in the all-books view open DraftKings (else the first book that gives a link)
+        pref = d.assign(_dk=(d.book != "draftkings")).sort_values("_dk")
+        slips = pref.groupby(["game", "player", "stat"]).agg(
+            link=("link", lambda x: next((v for v in x if isinstance(v, str)), None)),
+            under_link=("under_link", lambda x: next((v for v in x if isinstance(v, str)), None)))
         g = d.groupby(["game", "player", "stat"], as_index=False).agg(
             line=("line", "median"), price=("price", "median"), model_pred=("model_pred", "first"),
             model_median=("model_median", "first"),
             model_p_over=("model_p_over", "first"), book_p_over=("book_p_over", "median"), books=("book", "nunique"))
         g["Book"] = g.books.map(lambda n: f"{n} book" + ("s" if n != 1 else ""))
+        g = g.merge(slips.reset_index(), on=["game", "player", "stat"], how="left")
         d, td = g, g.stat == "any_td"
     diff = (d.model_p_over - d.book_p_over) * 100
     strong, lean = diff.abs() >= 8, diff.abs() >= 4
@@ -347,6 +375,8 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
         "Book %": (d.book_p_over * 100).round(1).values,
         "Difference": diff.round(1).values,
         "Lean": [label(i) for i in d.index],
+        "Over slip": [odds.bet_link(x) for x in d.link],
+        "Under slip": [odds.bet_link(x) for x in d.under_link],
         "_diff": diff.abs().values, "_book": d.Book.values,
     })
     if sort == "Sportsbook":
@@ -438,6 +468,8 @@ def midweek_picks(board: pd.DataFrame, fp: pd.DataFrame | None = None, min_diff:
             continue
         best_i = prices[ok].map(_dec).idxmax()
         price = float(prices[best_i])
+        lk_col = "link" if side in ("Over", "Yes") else "under_link"
+        slip = g[lk_col][best_i] if lk_col in g else None
         m_side = bp if side in ("Over", "Yes") else 1 - bp
         mo_side = mp if side in ("Over", "Yes") else 1 - mp
         dec = _dec(price)
@@ -448,7 +480,7 @@ def midweek_picks(board: pd.DataFrame, fp: pd.DataFrame | None = None, min_diff:
                      "fp_proj": fp_val, "model_median": g.model_median.iloc[0] if "model_median" in g else np.nan,
                      "fp_agrees": agrees, "edge_market": round((m_side * dec - 1) * 100, 1),
                      "edge_model": round((mo_side * dec - 1) * 100, 1), "diff": round(abs(diff), 1),
-                     "source": "model+FantasyPros" if agrees else "model"})
+                     "source": "model+FantasyPros" if agrees else "model", "link": slip})
     out = pd.DataFrame(rows)
     return out.sort_values("diff", ascending=False).reset_index(drop=True) if not out.empty else out
 
@@ -467,6 +499,7 @@ def picks_view(p: pd.DataFrame) -> pd.DataFrame:
         "FantasyPros": p.fp_proj.round(2) if "fp_proj" in p else np.nan,
         "Model median": p.model_median.round(1) if "model_median" in p else np.nan,
         "Edge at best price %": p.edge_market,
+        "Bet slip": [odds.bet_link(x) for x in p.link] if "link" in p else None,
     })
 
 

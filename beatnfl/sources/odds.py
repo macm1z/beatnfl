@@ -39,10 +39,24 @@ def _need_key(key: str):
                         "Get one at the-odds-api.com (free tier), then paste it in Settings. DFS lineups work without it.")
 
 
+def _link(o: dict, m: dict, bk: dict) -> str | None:
+    """Deepest bookmaker link the Odds API gives: the outcome (adds that bet to the book's betslip), else the
+    market, else the event page. None when the book doesn't provide links."""
+    return o.get("link") or m.get("link") or bk.get("link") or None
+
+
+def bet_link(url, state: str = "nj"):
+    """Fill the state into links that need one (some books use state sub-domains)."""
+    if not isinstance(url, str) or not url.startswith("http"):
+        return None
+    return url.replace("{state}", (state or "nj").lower())
+
+
 def game_lines(key: str, offline=False) -> pd.DataFrame:
     _need_key(key)
     data, meta = fetch_json(f"{BASE}/odds", params={"apiKey": key, "regions": "us", "markets": GAME_MARKETS,
-                                                     "oddsFormat": "american"}, step=STEP, max_age_h=1, offline=offline)
+                                                     "oddsFormat": "american", "includeLinks": "true"},
+                            step=STEP, max_age_h=1, offline=offline)
     rows = []
     for ev in data:
         h, a = FULL_TO_ABBR.get(ev["home_team"], ev["home_team"]), FULL_TO_ABBR.get(ev["away_team"], ev["away_team"])
@@ -53,7 +67,7 @@ def game_lines(key: str, offline=False) -> pd.DataFrame:
                     rows.append({"event_id": ev["id"], "commence": ev["commence_time"], "home": h, "away": a,
                                  "book": bk["key"], "market": mk["key"], "side": side, "line": o.get("point"),
                                  "price": o.get("price"), "source_ts": mk.get("last_update") or bk.get("last_update"),
-                                 "retrieved_stale": meta.stale})
+                                 "retrieved_stale": meta.stale, "link": _link(o, mk, bk), "event_link": bk.get("link")})
     return pd.DataFrame(rows)
 
 
@@ -120,7 +134,8 @@ def props(key: str, event_id: str, markets: list[str] | None = None, offline=Fal
     _need_key(key)
     mk = ",".join(markets or PROP_MARKETS)
     data, meta = fetch_json(f"{BASE}/events/{event_id}/odds",
-                            params={"apiKey": key, "regions": "us", "markets": mk, "oddsFormat": "american"},
+                            params={"apiKey": key, "regions": "us", "markets": mk, "oddsFormat": "american",
+                                    "includeLinks": "true"},
                             step=STEP, max_age_h=3, offline=offline)
     rows = []
     for bk in data.get("bookmakers", []):
@@ -129,7 +144,8 @@ def props(key: str, event_id: str, markets: list[str] | None = None, offline=Fal
                 rows.append({"event_id": event_id, "book": bk["key"], "market": m["key"],
                              "stat": PROP_MARKETS.get(m["key"], m["key"]), "player": o.get("description"),
                              "side": o.get("name"), "line": o.get("point"), "price": o.get("price"),
-                             "source_ts": m.get("last_update"), "retrieved_stale": meta.stale})
+                             "source_ts": m.get("last_update"), "retrieved_stale": meta.stale,
+                             "link": _link(o, m, bk)})
     return pd.DataFrame(rows)
 
 

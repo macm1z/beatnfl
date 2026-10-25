@@ -1043,3 +1043,25 @@ def test_ask_errors_are_explained_and_thinking_fallback():
     assert "unknown tool" in ask.run_tool(ctx, "nope", {})
     spec = {t["name"] for t in ask.tool_specs()}
     assert {"pool_players", "player", "build_lineups", "saved_set", "evidence"} <= spec
+
+
+
+def test_bet_links_fallback_and_state():
+    from beatnfl.sources import odds
+    o, m, b = {"link": "https://x/addToBetslip?id=1"}, {"link": "https://x/market"}, {"link": "https://x/event"}
+    assert odds._link(o, m, b).endswith("id=1") and odds._link({}, m, b).endswith("market") and odds._link({}, {}, b).endswith("event")
+    assert odds._link({}, {"link": None}, {}) is None
+    assert odds.bet_link("https://sports.{state}.betmgm.com/en/sports?options=1") == "https://sports.nj.betmgm.com/en/sports?options=1"
+    assert odds.bet_link(None) is None and odds.bet_link(float("nan")) is None and odds.bet_link("javascript:alert(1)") is None
+
+
+def test_picks_carry_the_best_books_slip():
+    from beatnfl import research
+    b = _board_rows()
+    b["link"] = [f"https://{bk}/over" for bk in b.book]
+    b["under_link"] = [f"https://{bk}/under" for bk in b.book]
+    p = research.midweek_picks(b, None, min_diff=4, sides=None)
+    v = research.picks_view(p).set_index("Player")
+    assert v.at["Drake London", "Bet slip"] == "https://fanduel/over"          # best Over price was FanDuel
+    assert v.at["Bijan Robinson", "Bet slip"] == "https://fanduel/under"
+    assert research.picks_view(research.midweek_picks(_board_rows(), None, min_diff=4, sides=None))["Bet slip"].isna().all()
