@@ -1313,6 +1313,10 @@ with tab_yahoo:
                 st.rerun()
         except StepError as e:
             st.error(e.as_text())
+            ss.pop("yteams", None)
+            if st.button("Disconnect Yahoo", key="ydisc_err", help="Forget this sign-in so you can sign in again."):
+                yahoo.disconnect()
+                st.rerun()
 
 # ------------------------------------------------------------------ EVIDENCE
 with tab_evidence:

@@ -247,7 +247,19 @@ def get(path: str, client_id: str, secret: str) -> dict:
         raise StepError(STEP, "Yahoo says the sign-in is no longer valid.", "The access was revoked or expired.",
                         "Click Disconnect, then sign in again.")
     if r.status_code != 200:
-        raise StepError(STEP, f"Yahoo returned an error (HTTP {r.status_code}).", r.text[:160],
+        desc = r.text[:300]
+        try:
+            desc = (r.json().get("error") or {}).get("description") or desc
+        except ValueError:
+            pass
+        if r.status_code == 403:
+            raise StepError(STEP, "Yahoo signed you in but won't share Fantasy data with this app (HTTP 403).",
+                            f"Yahoo said: {desc}. This almost always means the Yahoo app doesn't have the "
+                            "Fantasy Sports permission.",
+                            "developer.yahoo.com/apps → your app → API Permissions: tick Fantasy Sports → Read and save. "
+                            "Then in BeatNFL click Disconnect on this tab and sign in again (the permission is granted at sign-in).",
+                            detail=r.text[:300])
+        raise StepError(STEP, f"Yahoo returned an error (HTTP {r.status_code}).", desc,
                         "Try again in a minute; check Data status if it repeats.")
     return r.json()
 
