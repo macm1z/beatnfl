@@ -194,6 +194,12 @@ with st.sidebar:
         wp = c1.number_input("Yours", 0.0, 1.0, S.w_paid, 0.05, help="Your projections: FantasyPros API (key in Settings), or a pasted table / CSV")
         ws = c2.number_input("Sleeper", 0.0, 1.0, S.w_sleeper, 0.05)
         wm = c3.number_input("Model", 0.0, 1.0, S.w_model, 0.05)
+        from beatnfl import research as _rsb
+        _bk_all = list(dict.fromkeys(list(_rsb.BOOK_NAMES) + list(S.my_books)))
+        mybooks = st.multiselect("My sportsbooks", _bk_all, [b for b in S.my_books if b in _bk_all],
+                                 format_func=_rsb.book_name,
+                                 help="Where you can bet. Best odds, bet slips and the Picks price are taken from these "
+                                      "books only (offshore books are left out by default).")
         ubl = st.checkbox("Use sportsbook prop lines in the model", S.use_book_lines,
                           help="Moves the model's projection toward the books' player lines (≈5 Odds API credits per game, "
                                "reused for 3 hours). Tested on 2025: lower miss on unseen weeks.")
@@ -205,6 +211,7 @@ with st.sidebar:
             S.anthropic_api_key, S.ask_model = akey.strip(), amodel
             S.bettingpros_api_key = bpkey.strip()
             S.use_book_lines = bool(ubl)
+            S.my_books = list(mybooks) or list(_rsb.DEFAULT_BOOKS)
             S.yahoo_client_id, S.yahoo_client_secret = yid.strip(), ysec.strip()
             S.save()
             st.success("Saved. Click ⟳ Refresh to apply new weights.")
@@ -733,8 +740,9 @@ with tab_games:
             st.subheader("Chances: market vs model")
             gp = research.game_probs(season, week, raw, offline=offline)
             from beatnfl.sources import odds as _odds_src
-            _slip_raw = raw if book_pick else (raw_all[raw_all.book == "draftkings"] if raw_all is not None and not raw_all.empty else None)
-            gp["Bet slip"] = research.game_slips(gp, _slip_raw)
+            gp = gp.join(research.game_best(gp, raw_all, S.my_books))
+            gp["Bet slip"] = research.game_slips(gp, raw) if book_pick else gp["Best slip"]
+            gp = gp.drop(columns="Best slip")
             f1, f2, f3 = st.columns(3)
             pg = f1.selectbox("Game", ["All games"] + list(gt.Game), key="games_game")
             pt = f2.selectbox("Bet type", ["All", "Spread", "Moneyline", "Total"], key="games_type")
@@ -750,7 +758,7 @@ with tab_games:
                 st.info("Nothing matches these filters.")
             else:
                 show(v, {
-                    "Odds": st.column_config.NumberColumn("Odds", format="%+d", help="Median American odds across books."),
+                    "Odds": st.column_config.NumberColumn("Odds", format="%+d", help="Median American odds across books (or the selected book's)."),
                     "Market %": st.column_config.NumberColumn("Market %", format="%.1f%%",
                                                               help="The sportsbooks' chance for this side with their margin removed."),
                     "Model %": st.column_config.NumberColumn("Model %", format="%.1f%%",
@@ -758,7 +766,10 @@ with tab_games:
                                                                   "(model weighted 25%, market 75%, because the model alone hasn't beaten closing lines)."),
                     "Difference": st.column_config.NumberColumn("Difference", format="%+.1f",
                                                                 help="Model % − Market %, in percentage points. Click a column header to sort."),
-                    "Bet slip": st.column_config.LinkColumn("Bet slip", display_text="Slip ↗", help="Opens the sportsbook selected above (DraftKings in the all-books view) with this bet added to the betslip. "
+                    "Best odds": st.column_config.NumberColumn("Best odds", format="%+d",
+                                                               help="Highest payout for this side among your sportsbooks (Settings → My sportsbooks), at this line."),
+                    "Best book": st.column_config.Column("Best book", help="Where the best odds are. '(at …)' = the most-quoted line, when the line shown is an average."),
+                    "Bet slip": st.column_config.LinkColumn("Bet slip", display_text="Slip ↗", help="Opens the sportsbook selected above (the best-odds book in the all-books view) with this bet added to the betslip. "
                                                      "You review and place it in the book yourself — BeatNFL never places bets.")},
                      height=min(700, 38 + 35 * len(v)))
                 st.caption("Spread, moneyline and total each have their own chance. Differences of a couple of points "
@@ -890,7 +901,7 @@ with tab_props:
             pick_s = c3.selectbox("Sort by", ["Biggest difference", "Sportsbook", "Player"], key="props_sort")
             pick_f = c4.selectbox("Show", ["Every prop", "Only where model is higher (Over / Yes)",
                                            "Only where model disagrees (4+ pts)"], key="props_show")
-            view = research.props_view(b, pick_g, pick_b, pick_s)
+            view = research.props_view(b, pick_g, pick_b, pick_s, books=S.my_books)
             if not view.empty:
                 if pick_f.startswith("Only where model is higher"):
                     view = view[view.Difference > 0]
@@ -907,9 +918,11 @@ with tab_props:
                     "Book %": st.column_config.NumberColumn("Book %", format="%.0f%%", help="The book's chance of the Over (or Yes) with its margin removed."),
                     "Difference": st.column_config.NumberColumn("Difference", format="%+.1f", help="Model % − Book %, in percentage points."),
                     "Lean": st.column_config.Column("Lean", help="Model differs by 4+ points (★ = 8+)."),
-                    "Over slip": st.column_config.LinkColumn("Over slip", display_text="Over ↗", help="Opens the book (DraftKings in the all-books view — its line can differ by a half point; pick a sportsbook above for its exact line) with this bet added to the betslip. "
+                    "Best Over": st.column_config.Column("Best Over", help="Best Over (or Yes) price among your sportsbooks at the most-quoted line."),
+                    "Best Under": st.column_config.Column("Best Under", help="Best Under price among your sportsbooks at the most-quoted line."),
+                    "Over slip": st.column_config.LinkColumn("Over slip", display_text="Over ↗", help="Opens the book with the best Over price (in the all-books view) with this bet added to the betslip. "
                                                      "You review and place it in the book yourself — BeatNFL never places bets."),
-                    "Under slip": st.column_config.LinkColumn("Under slip", display_text="Under ↗", help="Opens the book (DraftKings in the all-books view) with this bet added to the betslip. "
+                    "Under slip": st.column_config.LinkColumn("Under slip", display_text="Under ↗", help="Opens the book with the best Under price (in the all-books view) with this bet added to the betslip. "
                                                      "You review and place it in the book yourself — BeatNFL never places bets.")},
                      height=min(700, 38 + 35 * len(view)))
             st.caption("\\* Anytime TD is quoted on one side only, so its Book % still includes the margin and runs high. "
@@ -1016,7 +1029,7 @@ with tab_picks:
         else:
             st.success(f"{len(pk_)} props flagged · {inf.get('new', 0)} newly logged · {inf.get('fp_note')}")
             show(_rs.picks_view(pk_), {
-                "Best odds": st.column_config.NumberColumn("Best odds", format="%+d", help="Best price for this side across all books right now."),
+                "Best odds": st.column_config.NumberColumn("Best odds", format="%+d", help="Best price for this side among your sportsbooks (Settings → My sportsbooks)."),
                 "Market %": st.column_config.NumberColumn("Market %", format="%.0f%%", help="All books' consensus chance for this side, margin removed."),
                 "Model %": st.column_config.NumberColumn("Model %", format="%.0f%%", help="BeatNFL's chance for this side."),
                 "FantasyPros": st.column_config.NumberColumn("FantasyPros", format="%.1f", help="FantasyPros' projection for the stat (TD: chance 0–1)."),

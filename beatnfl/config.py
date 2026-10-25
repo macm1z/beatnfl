@@ -38,6 +38,8 @@ class Settings:
     pos_weights: dict = field(default_factory=dict)
     # Tested share of FantasyPros in each stat forecast for Props {"rec_yds": .5, …}
     stat_weights: dict = field(default_factory=dict)
+    my_books: list = field(default_factory=lambda: ["draftkings", "fanduel", "betmgm", "williamhill_us", "fanatics",
+                                                    "espnbet", "betrivers", "hardrockbet", "ballybet", "betparx"])
     bettingpros_api_key: str = ""   # BettingPros Consumer API (personal use; follows your membership)
     anthropic_api_key: str = ""     # Ask tab (platform.claude.com/settings/keys); billed per use by Anthropic
     ask_model: str = "claude-sonnet-5-5"

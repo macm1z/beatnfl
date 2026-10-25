@@ -139,6 +139,34 @@ def game_probs(season: int, week: int, raw_lines: pd.DataFrame | None = None, of
     return out
 
 
+def game_best(gp: pd.DataFrame, raw: pd.DataFrame | None, books: list | None = None) -> pd.DataFrame:
+    """Best price for each row of game_probs across your sportsbooks, at the same line: Best odds, Best book,
+    and a betslip link to that book."""
+    out = pd.DataFrame({"Best odds": np.nan, "Best book": "", "Best slip": None}, index=gp.index)
+    if raw is None or raw.empty or gp.empty:
+        return out
+    r = raw[raw.book.isin(books)] if books else raw
+    if "link" not in r:
+        r = r.assign(link=None)
+    mk = {"Spread": "spreads", "Moneyline": "h2h", "Total": "totals"}
+    r = r.assign(Game=r.away + " @ " + r.home)
+    for i, game, bt, sd in zip(gp.index, gp.Game, gp["Bet type"], gp.Side):
+        parts = str(sd).split()
+        x = r[(r.Game == game) & (r.market == mk.get(bt)) & (r.side.astype(str) == parts[0])]
+        note = ""
+        if bt in ("Spread", "Total") and len(parts) > 1 and not x.empty:
+            want = 0.0 if parts[1] == "PK" else float(parts[1]) if parts[1].lstrip("+-").replace(".", "").isdigit() else None
+            exact = x[(x.line - want).abs() < 1e-9] if want is not None else x.iloc[0:0]
+            if exact.empty and x.line.notna().any():          # shown line is an average — use the most-quoted one
+                ln = x.line.mode().iloc[0]
+                exact = x[x.line == ln]
+                note = f" (at {ln:+g})" if bt == "Spread" else f" (at {ln:g})"
+            x = exact
+        p, bk, lk = _best(x, "price", "link")
+        out.loc[i, ["Best odds", "Best book", "Best slip"]] = [p, (book_name(bk) + note) if bk else "", odds.bet_link(lk)]
+    return out
+
+
 def game_slips(gp: pd.DataFrame, raw_book: pd.DataFrame | None) -> list:
     """Bet-slip link for each row of game_probs from one sportsbook's lines (None where it gives none)."""
     if raw_book is None or raw_book.empty or "link" not in raw_book or gp.empty:
@@ -303,6 +331,19 @@ BOOK_NAMES = {"draftkings": "DraftKings", "fanduel": "FanDuel", "betmgm": "BetMG
 STAT_NAMES = {"pass_yds": "Pass yds", "pass_att": "Pass att", "pass_cmp": "Completions", "pass_td": "Pass TDs",
               "rush_yds": "Rush yds", "rush_att": "Rush att", "rec": "Receptions", "rec_yds": "Rec yds", "any_td": "Anytime TD"}
 CONSENSUS = "All books (consensus)"
+# Books licensed in the US states BeatNFL users bet in (offshore books left out). Settings → "My sportsbooks".
+DEFAULT_BOOKS = ["draftkings", "fanduel", "betmgm", "williamhill_us", "fanatics", "espnbet", "betrivers",
+                 "hardrockbet", "ballybet", "betparx"]
+
+
+def _best(rows: pd.DataFrame, price_col: str, link_col: str):
+    """(price, book, link) of the best price in rows — highest payout. (nan, '', None) when none."""
+    r = (rows[rows[price_col].notna()] if price_col in rows else rows.iloc[0:0]).reset_index(drop=True)
+    if r.empty:
+        return np.nan, "", None
+    has = r[link_col].map(lambda v: isinstance(v, str)) if link_col in r else pd.Series(False, index=r.index)
+    i = r.assign(_d=r[price_col].map(_dec), _l=has).sort_values(["_d", "_l"], ascending=False).index[0]  # ties → a book with a slip
+    return float(r.at[i, price_col]), r.at[i, "book"], (r.at[i, link_col] if link_col in r else None)
 
 
 def book_name(key: str) -> str:
@@ -317,7 +358,17 @@ def _odds(v) -> str:
     return f"+{v}" if v > 0 else str(v)
 
 
-def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, sort: str = "Biggest difference") -> pd.DataFrame:
+def _best_txt(price, bk, best_line, line, stat) -> str:
+    if pd.isna(price):
+        return ""
+    t = f"{_odds(price)} {book_name(bk)}"
+    if stat != "any_td" and pd.notna(best_line) and pd.notna(line) and best_line != line:
+        t += f" (at {best_line:g})"
+    return t
+
+
+def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, sort: str = "Biggest difference",
+               books: list | None = None) -> pd.DataFrame:
     """One readable row per player/prop (consensus across books) or per book.
 
     Over/under props: book % is no-vig (over and under prices paired).
@@ -340,11 +391,18 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
             d[c] = None
     td = d.stat == "any_td"
     if book == CONSENSUS:
-        # slips in the all-books view open DraftKings (else the first book that gives a link)
-        pref = d.assign(_dk=(d.book != "draftkings")).sort_values("_dk")
-        slips = pref.groupby(["game", "player", "stat"]).agg(
-            link=("link", lambda x: next((v for v in x if isinstance(v, str)), None)),
-            under_link=("under_link", lambda x: next((v for v in x if isinstance(v, str)), None)))
+        # best price for each side among your sportsbooks, at the most-quoted line; slips open that book
+        mine = d[d.book.isin(books)] if books else d
+        best = []
+        for (gm_, pl_, st_), x in mine.groupby(["game", "player", "stat"]):
+            ln = x.line.mode().iloc[0] if x.line.notna().any() else np.nan
+            x = x[x.line == ln] if pd.notna(ln) else x
+            po, bo, lo = _best(x, "price", "link")
+            pu, bu, lu = _best(x, "under_price", "under_link")
+            best.append({"game": gm_, "player": pl_, "stat": st_, "best_line": ln, "best_over": po, "over_book": bo,
+                         "link": lo, "best_under": pu, "under_book": bu, "under_link": lu})
+        slips = pd.DataFrame(best, columns=["game", "player", "stat", "best_line", "best_over", "over_book", "link",
+                                            "best_under", "under_book", "under_link"]).set_index(["game", "player", "stat"])
         g = d.groupby(["game", "player", "stat"], as_index=False).agg(
             line=("line", "median"), price=("price", "median"), model_pred=("model_pred", "first"),
             model_median=("model_median", "first"),
@@ -375,6 +433,11 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
         "Book %": (d.book_p_over * 100).round(1).values,
         "Difference": diff.round(1).values,
         "Lean": [label(i) for i in d.index],
+        **({"Best Over": [_best_txt(p, bk, ln, l0, sd) for p, bk, ln, l0, sd in
+                          zip(d.best_over, d.over_book, d.best_line, d.line, d.stat)],
+            "Best Under": [("" if sd == "any_td" else _best_txt(p, bk, ln, l0, sd)) for p, bk, ln, l0, sd in
+                           zip(d.best_under, d.under_book, d.best_line, d.line, d.stat)]}
+           if "best_over" in d else {}),
         "Over slip": [odds.bet_link(x) for x in d.link],
         "Under slip": [odds.bet_link(x) for x in d.under_link],
         "_diff": diff.abs().values, "_book": d.Book.values,
@@ -426,7 +489,7 @@ def _dec(american) -> float:
 
 
 def midweek_picks(board: pd.DataFrame, fp: pd.DataFrame | None = None, min_diff: float = MIN_DIFF,
-                  need_fp: bool = True, sides=PICK_SIDES) -> pd.DataFrame:
+                  need_fp: bool = True, sides=PICK_SIDES, books: list | None = None) -> pd.DataFrame:
     """Props where the model differs from the market by min_diff+ points and (when FantasyPros numbers
     are available) FantasyPros points the same way. One row per prop with the best price across books.
     Information only — a research list to track against the closing line, not betting advice."""
@@ -461,7 +524,11 @@ def midweek_picks(board: pd.DataFrame, fp: pd.DataFrame | None = None, min_diff:
                 agrees = (fp_val > ref) if side in ("Over", "Yes") else (fp_val < ref)
         if need_fp and fpi is not None and not agrees:
             continue
-        # best price for the side across books at this exact line
+        # best price for the side across your books at this exact line
+        gb = g[g.book.isin(books)] if books else g
+        if gb.empty:
+            continue
+        g = gb
         prices = g.price if side in ("Over", "Yes") else g.under_price
         ok = prices.notna()
         if not ok.any():
@@ -632,7 +699,7 @@ def build_midweek(settings, season: int | None = None, week: int | None = None, 
     progress("Pulling props from every book…")
     board, info = props_board(settings.odds_api_key, season, week, fc, pm, markets or CORE_PROP_MARKETS,
                               offline=offline, progress=progress)
-    picks = midweek_picks(board, fp)
+    picks = midweek_picks(board, fp, books=getattr(settings, "my_books", None) or None)
     if not picks.empty:
         picks = picks.assign(season=season, week=week)
         info["new"] = storage.save_picks(picks)

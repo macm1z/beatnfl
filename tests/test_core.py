@@ -1065,3 +1065,44 @@ def test_picks_carry_the_best_books_slip():
     assert v.at["Drake London", "Bet slip"] == "https://fanduel/over"          # best Over price was FanDuel
     assert v.at["Bijan Robinson", "Bet slip"] == "https://fanduel/under"
     assert research.picks_view(research.midweek_picks(_board_rows(), None, min_diff=4, sides=None))["Bet slip"].isna().all()
+
+
+
+def test_best_odds_among_my_books():
+    from beatnfl import research
+    b = _board_rows()
+    b["link"] = [f"https://{bk}/over" for bk in b.book]
+    b["under_link"] = [f"https://{bk}/under" for bk in b.book]
+    b = pd.concat([b, b[b.book == "fanduel"].assign(book="bovada", price=150, under_price=150,
+                                                    link="https://bovada/over", under_link="https://bovada/under")])
+    mine = research.DEFAULT_BOOKS
+    v = research.props_view(b, books=mine).set_index("Player")
+    assert v.at["Drake London", "Best Over"] == "+105 FanDuel" and v.at["Drake London", "Over slip"] == "https://fanduel/over"
+    assert v.at["Drake London", "Best Under"] == "-105 DraftKings" and v.at["Drake London", "Under slip"] == "https://draftkings/under"
+    assert research.props_view(b).set_index("Player").at["Drake London", "Best Over"].endswith("Bovada")   # no filter → offshore wins
+    p = research.midweek_picks(b, None, min_diff=4, sides=None, books=mine)
+    assert set(p.book) == {"fanduel"}
+    gp = pd.DataFrame({"Game": ["CHI @ ATL"] * 4, "Bet type": ["Spread", "Spread", "Total", "Moneyline"],
+                       "Side": ["ATL -3", "CHI PK", "Over 47.25", "ATL win"]})
+    raw = pd.DataFrame([
+        dict(home="ATL", away="CHI", book="draftkings", market="spreads", side="ATL", line=-3.0, price=-110, link="https://dk/s"),
+        dict(home="ATL", away="CHI", book="fanduel", market="spreads", side="ATL", line=-3.0, price=-105, link="https://fd/s"),
+        dict(home="ATL", away="CHI", book="bovada", market="spreads", side="ATL", line=-3.0, price=110, link="https://bov/s"),
+        dict(home="ATL", away="CHI", book="betmgm", market="spreads", side="ATL", line=-2.5, price=+120, link="https://mgm/s"),
+        dict(home="ATL", away="CHI", book="draftkings", market="spreads", side="CHI", line=0.0, price=-102, link=None),
+        dict(home="ATL", away="CHI", book="draftkings", market="totals", side="Over", line=47.5, price=-108, link="https://dk/o"),
+        dict(home="ATL", away="CHI", book="fanduel", market="totals", side="Over", line=47.5, price=-112, link="https://fd/o"),
+        dict(home="ATL", away="CHI", book="fanduel", market="totals", side="Over", line=47.0, price=-120, link="https://fd/o2"),
+        dict(home="ATL", away="CHI", book="fanduel", market="h2h", side="ATL", line=None, price=-150, link="https://fd/ml"),
+        dict(home="ATL", away="CHI", book="betrivers", market="h2h", side="ATL", line=None, price=-140, link="https://br/ml")])
+    best = research.game_best(gp, raw, mine)
+    assert best["Best odds"].tolist() == [-105, -102, -108, -140]
+    assert best["Best book"].tolist() == ["FanDuel", "DraftKings", "DraftKings (at 47.5)", "BetRivers"]
+    assert best["Best slip"].tolist() == ["https://fd/s", None, "https://dk/o", "https://br/ml"]
+
+
+
+def test_best_price_tie_prefers_a_book_with_a_slip():
+    from beatnfl import research
+    r = pd.DataFrame({"book": ["williamhill_us", "draftkings"], "price": [-110, -110], "link": [None, "https://dk/x"]})
+    assert research._best(r, "price", "link") == (-110.0, "draftkings", "https://dk/x")
