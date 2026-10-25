@@ -1724,10 +1724,20 @@ with tab_parlay:
         if pr.empty:
             st.info("None of your sportsbooks offer these legs.")
         else:
+            bp_ = _pl.best(pr)
+            if bp_:
+                m1, m2, m3 = st.columns(3)
+                m1.metric(f"{len(legs)}-leg parlay odds", f"{int(bp_['odds']):+d}")
+                m2.metric("$10 pays", f"${bp_['pays10']:,.2f}")
+                m3.metric("Best at", " = ".join(bp_["tied"]) if len(bp_["tied"]) <= 3 else bp_["name"])
+            else:
+                st.warning(f"No single sportsbook of yours offers all {len(legs)} legs, so there's no parlay price yet — "
+                           "see **Not offered** below and remove or swap those legs.")
             st.markdown(f"**{len(legs)}-leg parlay at your sportsbooks** (best first)")
             show(pr.drop(columns="book"), {
                 "Best": st.column_config.Column("Best", help="Highest payout. Tied books pay exactly the same — use whichever you prefer."),
-                "Not offered": st.column_config.Column("Not offered", help="Legs this book doesn't offer at this line — the parlay can't be placed there as is."),
+                "Not offered": st.column_config.Column("Not offered", help="Legs this book doesn't offer — the parlay can't be placed there as is."),
+                "Different line": st.column_config.Column("Different line", help="Legs this book hangs at a different line (e.g. 75.5 instead of 74.5) — the price uses that book's line."),
                 "Parlay odds": st.column_config.NumberColumn("Parlay odds", format="%+d", help="All legs' odds multiplied (independent legs)."),
                 "Pays on $10": st.column_config.NumberColumn("Pays on $10", format="$%.2f", help="Total return on a $10 bet, stake included."),
                 "Market chance %": st.column_config.NumberColumn("Market chance %", format="%.1f%%",

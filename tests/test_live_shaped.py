@@ -266,6 +266,7 @@ def test_app_every_button(live, monkeypatch):
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert any("leg parlay" in m.value for m in at.markdown)
+    assert any(m.label.endswith("parlay odds") and m.value.startswith(("+", "-")) for m in at.metric)   # the final odds
     assert any(w for w in at.warning if "Same-game" in w.value)          # both legs are from the one props game
     [b for b in at.button if b.label == "Clear parlay"][0].click().run()
     assert not at.exception and at.session_state["parlay"] == []

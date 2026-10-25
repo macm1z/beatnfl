@@ -1135,9 +1135,12 @@ def test_parlay_pricing_and_slips():
     assert pr.at["betmgm", "Legs offered"] == "1 of 3" and pd.isna(pr.at["betmgm", "Parlay odds"])
     assert abs(pr.at["fanduel", "Model chance %"] - round(100 * .63 * .62 * .55, 1)) < 1e-9
     sl = parlay.slips(legs, "fanduel")
-    assert sl.Slip.tolist() == ["https://fanduel/over/Drake London", "https://fanduel/under/Bijan Robinson", "https://fanduel/den"]
+    assert sl.Slip.tolist()[:3] == ["https://fanduel/over/Drake London", "https://fanduel/under/Bijan Robinson", "https://fanduel/den"]
+    assert sl.Leg.iloc[3].startswith("PARLAY — all 3 legs") and sl.Odds.iloc[3] == parlay.american(dec)    # the final odds
+    top = parlay.best(pr.reset_index())
+    assert top["book"] == "fanduel" and top["pays10"] == round(10 * dec, 2)
     bj["side"] = "Over"                                                          # switching side uses the other prices
-    assert parlay.slips([bj], "draftkings").Odds.tolist() == [-110] and parlay.leg_probs(bj)[0] == 0.38
+    assert parlay.slips([bj], "draftkings").Odds.tolist()[0] == -110 and parlay.leg_probs(bj)[0] == 0.38
     assert parlay.same_game(legs) == ["CHI @ ATL"]
     assert parlay.american(2.5) == 150 and parlay.american(1.5) == -200
 
@@ -1221,3 +1224,15 @@ def test_rows_ticked_on_props_become_parlay_legs():
     import ast
     src = (Path(__file__).resolve().parent.parent / "app.py").read_text()
     assert "r_._key" not in src and "r_._side" not in src                   # itertuples would rename these columns
+
+
+
+def test_parlay_uses_each_books_nearest_line_and_says_so():
+    from beatnfl import parlay
+    b = _board_rows()
+    b = pd.concat([b, b[(b.player == "Drake London") & (b.book == "draftkings")].assign(book="betrivers", line=75.5, price=-105)])
+    lg = parlay.prop_leg(b, "CHI @ ATL|Drake London|rec_yds", "Over")
+    pr = parlay.price([lg], ["draftkings", "betrivers"]).set_index("book")
+    assert pr.at["betrivers", "Different line"] == "Drake London at 75.5" and pr.at["draftkings", "Different line"] == ""
+    assert "this book: 75.5" in parlay.slips([lg], "betrivers").Leg.iloc[0]
+    assert parlay.best(parlay.price([lg], ["betmgm_only_not_listed"])) is None
