@@ -210,6 +210,23 @@ def test_validator_catches_bad_lineups():
     rich = pool[pool.pos != "DST"].nlargest(8, "salary").dk_id.tolist()
 
 
+def test_single_entry_presets_give_best_lineup_first():
+    _, pool = pool_from_fixture()
+    idx = pool.set_index("dk_id")
+    best = optimizer.build(pool, optimizer.OptSettings(n_lineups=1, randomness=0, stack_min=0)).lineups[0]
+    for ct in ("cash", "se"):
+        r = optimizer.build(pool, optimizer.OptSettings(**optimizer.preset(ct)))
+        assert len(r.lineups) == 3 and r.status == "complete"
+        pts = [idx.loc[lu].proj.sum() for lu in r.lineups]
+        assert pts == sorted(pts, reverse=True)
+        assert all(len(set(a) ^ set(b)) >= 4 for i, a in enumerate(r.lineups) for b in r.lineups[i + 1:])
+        if ct == "cash":     # no stack rule → the single highest-projected lineup on the slate
+            assert abs(pts[0] - idx.loc[best].proj.sum()) < 1e-6
+    assert optimizer.preset("unknown") == optimizer.PRESETS["se"]
+    s = Settings()
+    assert s.contest == "se"
+
+
 def test_flex_is_latest_kickoff():
     _, pool = pool_from_fixture()
     r = optimizer.build(pool, optimizer.OptSettings(n_lineups=10))

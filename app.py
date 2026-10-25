@@ -374,17 +374,34 @@ with tab_week:
         ss["excludes"] = ed[ed.Exclude].dk_id.tolist() + [l for l in ss.get("excludes", []) if l not in set(view.dk_id)]
 
         st.subheader("Build lineups")
+        ct_keys = list(optimizer.CONTESTS)
+        contest = st.radio("Contest", ct_keys, index=ct_keys.index(S.contest) if S.contest in ct_keys else 1,
+                           format_func=optimizer.CONTESTS.get, horizontal=True, key="contest",
+                           help="Sets the builder for the contest you're entering. Cash: highest projection, no stack "
+                                "required. Single-entry tournament: highest projection with a QB stack. Both give your "
+                                "best lineup first plus two backups that change 2+ players, in case of late news.")
+        if contest != S.contest:
+            S.contest = contest
+            S.save()
+        P = optimizer.preset(contest) if contest != "multi" else dict(
+            n_lineups=S.n_lineups, max_exposure=S.max_exposure, min_unique=S.min_unique,
+            stack_min=S.stack_min, bring_back=S.bring_back, randomness=S.randomness)
         c = st.columns(7)
+        k = f"_{contest}"          # each contest type keeps its own control values
         o = optimizer.OptSettings(
-            n_lineups=c[0].number_input("Lineups", 1, 150, S.n_lineups),
-            min_salary=c[1].number_input("Min salary", 40000, 50000, S.min_salary, 100),
-            max_exposure=c[2].slider("Max exposure", 0.1, 1.0, S.max_exposure, 0.05,
+            n_lineups=c[0].number_input("Lineups", 1, 150, P["n_lineups"], key="n" + k,
+                                        help="Single entry: #1 is the one to enter; the rest are backups."),
+            min_salary=c[1].number_input("Min salary", 40000, 50000, S.min_salary, 100, key="ms" + k),
+            max_exposure=c[2].slider("Max exposure", 0.1, 1.0, float(P["max_exposure"]), 0.05, key="mx" + k,
                                      help="Most lineups any one player can appear in (share of the set)."),
-            min_unique=c[3].number_input("Min changes", 1, 6, S.min_unique, help="Players each lineup must differ by."),
-            stack_min=c[4].number_input("QB stack", 0, 3, S.stack_min, help="Pass-catchers from the QB's team."),
-            bring_back=c[5].number_input("Bring-back", 0, 2, S.bring_back, help="Players from the QB's opponent."),
-            randomness=c[6].slider("Randomness", 0.0, 0.4, S.randomness, 0.02,
-                                   help="Projection noise per lineup, for variety."),
+            min_unique=c[3].number_input("Min changes", 1, 6, P["min_unique"], key="mu" + k,
+                                         help="Players each lineup must differ by."),
+            stack_min=c[4].number_input("QB stack", 0, 3, P["stack_min"], key="sk" + k,
+                                        help="Pass-catchers from the QB's team."),
+            bring_back=c[5].number_input("Bring-back", 0, 2, P["bring_back"], key="bb" + k,
+                                         help="Players from the QB's opponent."),
+            randomness=c[6].slider("Randomness", 0.0, 0.4, float(P["randomness"]), 0.02, key="rn" + k,
+                                   help="Projection noise per lineup, for variety (multi-entry only; 0 = pure best)."),
             locks=ss.get("locks", []), excludes=ss.get("excludes", []))
         b1, b2, b3, b4 = st.columns([3, 1.3, 1.3, 4], vertical_alignment="bottom")
         name = b1.text_input("Name for this set", f"{r.season}_wk{r.week}" if r.week else "lineups")

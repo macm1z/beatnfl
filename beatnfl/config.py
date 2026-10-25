@@ -38,7 +38,9 @@ class Settings:
     pos_weights: dict = field(default_factory=dict)
     # Tested share of FantasyPros in each stat forecast for Props {"rec_yds": .5, …}
     stat_weights: dict = field(default_factory=dict)
-    # Optimizer defaults (Classic GPP)
+    # Contest type: "cash" | "se" (single-entry tournament) | "multi" — picks the lineup-builder preset
+    contest: str = "se"
+    # Optimizer defaults (multi-entry tournament preset; cash / single entry use optimizer.PRESETS)
     n_lineups: int = 20
     min_salary: int = 49000
     max_exposure: float = 0.35    # ≤ 7 of 20 lineups per player (was 0.60 — one bust sank most lineups)

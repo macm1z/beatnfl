@@ -207,6 +207,14 @@ def test_app_every_button(live, monkeypatch):
         sb = at.selectbox(key=key)
         sb.set_value(sb.options[1]).run()
         assert not at.exception, f"{key}: {[e.value for e in at.exception]}"
+    # contest types: each builds; single entry gives best + 2 backups, multi-entry the full set
+    for ct, n in (("cash", 3), ("multi", None), ("se", 3)):
+        at.radio(key="contest").set_value(ct).run()
+        [b for b in at.button if b.label == "⚙ Build lineups"][0].click().run()
+        assert not at.exception, f"contest {ct}: {[e.value for e in at.exception]}"
+        got = len(at.session_state["lineups"]["result"].lineups)
+        assert got == n if n else got > 3, (ct, got)
+    assert Settings.load().contest == "se"
     # saved: one set saved, building+saving the same lineups again must not add a duplicate
     from beatnfl import storage
     assert len(storage.list_lineup_sets()) >= 1

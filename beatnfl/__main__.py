@@ -29,9 +29,15 @@ def cmd_run(a):
         print(st.as_text())
     if r.pool is None or r.pool.proj.notna().sum() == 0:
         sys.exit(1)
-    o = OptSettings(n_lineups=a.n or s.n_lineups, min_salary=s.min_salary, max_exposure=s.max_exposure,
-                    min_unique=s.min_unique, stack_min=s.stack_min, bring_back=s.bring_back, randomness=s.randomness,
-                    no_offense_vs_dst=s.no_offense_vs_dst)
+    from .optimizer import preset
+    if s.contest == "multi":
+        p = dict(n_lineups=s.n_lineups, max_exposure=s.max_exposure, min_unique=s.min_unique,
+                 stack_min=s.stack_min, bring_back=s.bring_back, randomness=s.randomness)
+    else:
+        p = preset(s.contest)
+    if a.n:
+        p["n_lineups"] = a.n
+    o = OptSettings(min_salary=s.min_salary, no_offense_vs_dst=s.no_offense_vs_dst, **p)
     out = pipeline.build_lineups(r, o, save=True, export_files=True)
     res = out["result"]
     print(f"\nLineups: requested {res.requested}, generated {len(res.lineups)} ({res.status}, {res.elapsed}s)")

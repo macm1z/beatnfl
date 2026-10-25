@@ -40,6 +40,26 @@ class OptSettings:
     time_limit: float = 10.0
 
 
+# Contest presets. Single-entry contests are won by your one best lineup, so there is no noise
+# and no exposure limit: the optimizer returns the highest-projected lineup first, plus the next
+# best distinct ones as backups for late news (change ≥ 2 players).
+CONTESTS = {
+    "cash": "Cash — 50/50, double-up, head-to-head",
+    "se": "Single-entry tournament",
+    "multi": "Multi-entry tournament (many lineups)",
+}
+PRESETS = {
+    "cash": dict(n_lineups=3, max_exposure=1.0, min_unique=2, stack_min=0, bring_back=0, randomness=0.0),
+    "se": dict(n_lineups=3, max_exposure=1.0, min_unique=2, stack_min=1, bring_back=0, randomness=0.0),
+    "multi": dict(n_lineups=20, max_exposure=0.35, min_unique=3, stack_min=1, bring_back=0, randomness=0.12),
+}
+
+
+def preset(contest: str, **over) -> dict:
+    """Optimizer settings for a contest type (unknown type → single-entry tournament)."""
+    return {**PRESETS.get(contest, PRESETS["se"]), **over}
+
+
 @dataclass
 class OptResult:
     lineups: list            # list[list[dk_id]] in SLOT order
