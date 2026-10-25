@@ -265,6 +265,14 @@ def get(path: str, client_id: str, secret: str) -> dict:
             desc = (r.json().get("error") or {}).get("description") or desc
         except ValueError:
             pass
+        if r.status_code == 403 and "not authorized to perform this action" in desc.lower():
+            raise StepError(STEP, "Yahoo now requires approval before an app can read Fantasy data (HTTP 403).",
+                            "Since July 2026 Yahoo blocks every Fantasy Sports API call from apps that haven't been "
+                            "approved through its new access program — your sign-in works, the data call is refused. "
+                            "Nothing in BeatNFL or your Yahoo app settings can get around it.",
+                            "Apply at sports.yahoo.com/developer/access/ with your app's App ID (developers report "
+                            "2–6 weeks). Once Yahoo emails that access is live, click Disconnect here and sign in again.",
+                            detail=r.text[:300])
         if r.status_code == 403:
             raise StepError(STEP, "Yahoo signed you in but won't share Fantasy data with this app (HTTP 403).",
                             f"Yahoo said: {desc}. This almost always means the Yahoo app doesn't have the "
