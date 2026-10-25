@@ -88,16 +88,39 @@ def run_week(settings: Settings | None = None, *, salary_file: Path | bytes | No
                 run.slate = dk.load_auto(draft_group_id, offline=offline)
             except StepError as auto_err:
                 f = newest_salary_file()
-                if f is None:
-                    raise
-                run.slate = dk.load_from_file(f, label=f"{f.name}")
-                run.add("1. Slate (automatic)", "warn",
-                        f"Automatic DraftKings download failed ({(auto_err.why or auto_err.what)[:140]}) — "
-                        f"used {f.name} from your inbox instead (saved {datetime.fromtimestamp(f.stat().st_mtime):%a %b %-d %-I:%M %p}).",
-                        "", auto_err.detail)
+                fallback = None
+                if f is not None:
+                    try:
+                        cand = dk.load_from_file(f, label=f"{f.name}")
+                        st_ = pd.to_datetime(cand.players.start_utc.replace("", None), utc=True, errors="coerce").dropna()
+                        if len(st_) and st_.max() >= pd.Timestamp.now(tz="UTC"):
+                            fallback = cand
+                            run.add("1. Slate (automatic)", "warn",
+                                    f"{auto_err.what} Used {f.name} from your inbox instead (saved "
+                                    f"{datetime.fromtimestamp(f.stat().st_mtime):%a %b %-d %-I:%M %p}). Everything else refreshed.",
+                                    auto_err.fix, auto_err.detail)
+                    except StepError:
+                        pass
+                if fallback is None:
+                    prev = storage.recent_open_slate()
+                    if prev is None:
+                        raise
+                    meta_, players_ = prev
+                    fallback = dk.LoadedSlate(players_, dk.SlateInfo(str(meta_.get("draft_group_id") or ""), meta_.get("label") or "",
+                                                                     meta_.get("first_start_utc") or "", int(players_.game.nunique()),
+                                                                     dk.CLASSIC_CONTEST_TYPE),
+                                              "saved", bool(meta_.get("ids_verified")), [], "kept from earlier", meta_.get("content_hash") or "")
+                    when = pd.Timestamp(meta_["created_utc"]).tz_localize("UTC") if pd.Timestamp(meta_["created_utc"]).tzinfo is None \
+                        else pd.Timestamp(meta_["created_utc"])
+                    run.add("1. Slate (automatic)", "warn",
+                            f"{auto_err.what} Kept the slate you loaded {when.tz_convert('America/New_York'):%a %-I:%M %p} "
+                            f"({meta_.get('label') or 'saved slate'}) — salaries don't change once posted. Injuries, projections "
+                            "and lines below are refreshed.", auto_err.fix, auto_err.detail)
+                run.slate = fallback
         sl = run.slate
         starts = pd.to_datetime(sl.players.start_utc.replace("", None), utc=True, errors="coerce").dropna()
-        if len(starts) and starts.max() < pd.Timestamp.now(tz="UTC"):
+        kept = sl.route == "saved"
+        if len(starts) and starts.max() < pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=6 if kept else 0):
             raise StepError("1. Slate", f"This salary file is for a slate that has already been played "
                             f"(last game {starts.max().tz_convert('America/New_York'):%a %b %-d}).",
                             "It is an old DKSalaries.csv — the app will not swap in a different week silently.",

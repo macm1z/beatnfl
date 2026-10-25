@@ -100,6 +100,20 @@ def get_slate(slate_id: int) -> tuple[dict, pd.DataFrame]:
     return meta, _df(r["players"])
 
 
+def recent_open_slate(hours_after_last_kick: float = 6.0):
+    """The most recently saved slate whose last game kicked off no more than `hours_after_last_kick` ago
+    (so it's still this week's) — (meta, players) or None. Used when DraftKings refuses a download."""
+    with db() as c:
+        rows = c.execute("SELECT * FROM slates ORDER BY created_utc DESC LIMIT 15").fetchall()
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=hours_after_last_kick)
+    for r in rows:
+        p = _df(r["players"])
+        st = pd.to_datetime(p.start_utc.replace("", None), utc=True, errors="coerce").dropna() if "start_utc" in p else pd.Series(dtype="datetime64[ns, UTC]")
+        if len(p) and p.game.nunique() >= 2 and len(st) and st.max() >= cutoff:
+            return {k: r[k] for k in r.keys() if k != "players"}, p
+    return None
+
+
 def mark_verified(slate_id: int, ok: bool):
     with db() as c:
         c.execute("UPDATE slates SET ids_verified=? WHERE id=?", (int(ok), slate_id))

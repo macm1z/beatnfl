@@ -295,6 +295,7 @@ def load_auto(draft_group_id: str | None = None, offline=False) -> LoadedSlate:
         slate, tried = SlateInfo(str(draft_group_id), f"DG {draft_group_id}", "", 0, CLASSIC_CONTEST_TYPE), [f"lobby: {e.what}"]
 
     dg = slate.draft_group_id
+    blocked = False
     try:
         data, meta = fetch_json(DRAFTABLES.format(dg=dg), params={"format": "json"}, step=STEP, max_age_h=0.5, offline=offline)
         df, warns = parse_draftables(data)
@@ -305,10 +306,16 @@ def load_auto(draft_group_id: str | None = None, offline=False) -> LoadedSlate:
         return LoadedSlate(df, slate, "json", not multi, warns,
                            "cached" if meta.from_cache else "live", content_hash(df))
     except StepError as e:
+        blocked |= "HTTP 403" in (e.detail or "") or "Access Denied" in (e.detail or "")
         tried.append(f"draftables JSON: {e.what} ({e.detail[:80]})")
     try:
         body, meta = fetch(CSV_URL, params={"contestTypeId": CLASSIC_CONTEST_TYPE, "draftGroupId": dg}, step=STEP,
                            max_age_h=0.5, offline=offline)
+        head = body[:400].decode("utf-8", "replace").lstrip("\ufeff \r\n").lower()
+        if head.startswith("<") or "access denied" in head:
+            blocked = True
+            raise StepError(STEP, "DraftKings returned a web page instead of the salary file.", "", "",
+                            detail=head[:120])
         df, warns = parse_salary_csv(body)
         warns += validate_slate(df)
         if meta.stale:
@@ -316,7 +323,15 @@ def load_auto(draft_group_id: str | None = None, offline=False) -> LoadedSlate:
         return LoadedSlate(df, slate, "csv-endpoint", True, warns, "cached" if meta.from_cache else "live", content_hash(df))
     except StepError as e:
         tried.append(f"CSV endpoint: {e.what} ({e.detail[:80]})")
-    raise StepError(STEP, "Automatic DraftKings download failed on every route.",
+    where = f" Slate tried: {slate.label or 'DG ' + dg}."
+    if blocked:
+        raise StepError(STEP, "DraftKings is refusing automatic downloads from this connection right now." + where,
+                        "Its bot protection answered “Access Denied”. This is on DraftKings' side and usually clears in "
+                        "15 minutes to a few hours; VPNs, hotel, airport and work networks trigger it more often.",
+                        "Wait 15–30 minutes and click ⟳ Refresh (turn off any VPN). Or load the file yourself — always works: "
+                        "DraftKings → any NFL Classic contest on this slate → Export to CSV → drop it in ~/BeatNFL/inbox.",
+                        detail=" | ".join(tried))
+    raise StepError(STEP, "Automatic DraftKings download failed on every route." + where,
                     "Tried → " + " | ".join(tried),
                     "Load DKSalaries.csv manually: DraftKings → any NFL Classic contest on this slate → Export to CSV → "
                     "drop it in ~/BeatNFL/inbox (the app picks up the newest file).")

@@ -1159,3 +1159,39 @@ def test_ties_listed_and_in_your_book_order():
     pr = parlay.price(legs, ["fanduel", "draftkings", "betmgm"])
     assert pr.book.tolist() == ["fanduel", "draftkings", "betmgm"]
     assert pr.Best.tolist() == ["★ tied best", "★ tied best", ""] and pr["Not offered"].iloc[2] == "y"
+
+
+def test_draftkings_block_keeps_saved_slate_and_refreshes_the_rest(monkeypatch):
+    from beatnfl import pipeline
+    from beatnfl.sources import dk as _dk
+    future = SAL.read_text(encoding="utf-8-sig").replace("10/18/2026", "12/27/2099")
+    ls = _dk.load_from_file(future.encode())
+    ls.content_hash = "FIXTURE-future-week"          # same players/salaries as the week-6 fixture, different week
+    storage.save_slate(ls, 2099, 17)
+    assert storage.recent_open_slate() is not None
+    monkeypatch.setattr(pipeline, "newest_salary_file", lambda: None)
+
+    def blocked(*a, **k):
+        raise StepError("Load DraftKings slate", "DraftKings is refusing automatic downloads from this connection right now.",
+                        "bot protection", "Wait 15–30 minutes and click ⟳ Refresh.", detail="HTTP 403: Access Denied")
+    monkeypatch.setattr(_dk, "load_auto", blocked)
+    r = pipeline.run_week(Settings(), use_model=False, offline=True)
+    s1 = r.steps[0]
+    assert s1.step == "1. Slate (automatic)" and s1.status == "warn" and "Kept the slate" in s1.message, (s1.step, s1.message)
+    assert "Wait 15" in s1.fix
+    assert r.pool is not None and len(r.pool) == len(ls.players)                       # the rest of the refresh ran
+    assert any(x.step.startswith("2.") for x in r.steps) and any(x.step.startswith("5.") for x in r.steps)
+
+
+def test_csv_endpoint_block_page_is_recognised(monkeypatch):
+    from beatnfl.sources import dk as _dk
+    monkeypatch.setattr(_dk, "discover", lambda offline=False: [_dk.SlateInfo("153728", "Sun 1:00 PM · 12 games · DG 153728", "", 12, 21)])
+
+    def fj(url, **k):
+        raise StepError("x", "Could not download", detail="HTTP 403: <HTML><HEAD><TITLE>Access Denied</TITLE>")
+    monkeypatch.setattr(_dk, "fetch_json", fj)
+    monkeypatch.setattr(_dk, "fetch", lambda url, **k: (b"<HTML><HEAD><TITLE>Access Denied</TITLE></HEAD>", None))
+    with pytest.raises(StepError) as e:
+        _dk.load_auto()
+    assert "refusing automatic downloads" in e.value.what and "DG 153728" in e.value.what
+    assert "Export to CSV" in e.value.fix
