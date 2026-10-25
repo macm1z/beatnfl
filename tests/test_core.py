@@ -1243,7 +1243,7 @@ def test_yahoo_redirect_uri_and_pasted_address(monkeypatch, tmp_path):
     from beatnfl.sources import yahoo
     u = yahoo.auth_url(" cid ", "https://localhost:8000")
     q = parse_qs(urlparse(u).query)
-    assert q["redirect_uri"] == ["https://localhost:8000"] and q["client_id"] == ["cid"] and q["scope"] == ["fspt-r"]
+    assert q["redirect_uri"] == ["https://localhost:8000"] and q["client_id"] == ["cid"] and "scope" not in q
     assert parse_qs(urlparse(yahoo.auth_url("cid", "oob")).query)["redirect_uri"] == ["oob"]
     assert yahoo.extract_code("https://localhost:8000/?code=abc123&state=x") == "abc123"
     assert yahoo.extract_code("  abc123 ") == "abc123"
