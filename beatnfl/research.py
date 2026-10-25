@@ -43,6 +43,19 @@ def _line_txt(team: str, handicap: float) -> str:
     return f"{team} PK" if abs(handicap) < 0.05 else f"{team} {handicap:+g}"
 
 
+def _kick_utc(g: pd.DataFrame) -> pd.Series:
+    """Kickoff of each schedule row as a UTC timestamp (schedule times are US Eastern)."""
+    k = pd.to_datetime(g.gameday.astype(str) + " " + g.gametime.fillna("13:00").astype(str), errors="coerce")
+    return k.dt.tz_localize("America/New_York", ambiguous="NaT", nonexistent="shift_forward").dt.tz_convert("UTC")
+
+
+def started(kick_utc, now=None) -> pd.Series:
+    """True where the game has kicked off (props and lines for it are no longer bettable pre-game)."""
+    now = now or pd.Timestamp.now(tz="UTC")
+    k = pd.to_datetime(pd.Series(kick_utc), utc=True, errors="coerce")
+    return (k <= now).fillna(False)
+
+
 def games_data(season: int, week: int, raw_lines: pd.DataFrame | None = None, offline=False) -> pd.DataFrame:
     """One row per game: market lines/prices (Odds API median of books, else the nflverse schedule),
     the market's no-vig probabilities, and the model's numbers."""
@@ -77,6 +90,7 @@ def games_data(season: int, week: int, raw_lines: pd.DataFrame | None = None, of
     g["p_home_cover"] = g.p_home_cover.fillna(pd.Series([nv2(a, b) for a, b in zip(g.home_spread_price, g.away_spread_price)], index=g.index))
     g["p_home_win"] = g.p_home_win.fillna(pd.Series([nv2(a, b) for a, b in zip(g.ml_home, g.ml_away)], index=g.index))
     g["p_over"] = g.p_over.fillna(pd.Series([nv2(a, b) for a, b in zip(g.over_price, g.under_price)], index=g.index))
+    g["kick_utc"] = _kick_utc(g)
     g["blend_spread"] = g.spread_nv + gm.BLEND_W * (g.model_spread - g.spread_nv)
     g["blend_total"] = g.total + gm.BLEND_W * (g.model_total - g.total)
     return g.reset_index(drop=True)
@@ -102,6 +116,7 @@ def games_table(season: int, week: int, raw_lines: pd.DataFrame | None = None, o
         "Model spread": [fav(h, a, m) for h, a, m in zip(g.home, g.away, g.model_spread)],
         "Model total": g.model_total.round(1),
         "_src": g.src,
+        "_kick": g.kick_utc,
     })
 
 
@@ -132,6 +147,7 @@ def game_probs(season: int, week: int, raw_lines: pd.DataFrame | None = None, of
             rows += [(game, "Total", f"Over {r.total:g}", r.over_price, r.p_over, po),
                      (game, "Total", f"Under {r.total:g}", r.under_price, 1 - r.p_over, 1 - po)]
     out = pd.DataFrame(rows, columns=["Game", "Bet type", "Side", "Odds", "Market %", "Model %"])
+    out["_kick"] = out.Game.map(dict(zip(g.away + " @ " + g.home, g.kick_utc)))
     out["Odds"] = pd.to_numeric(out.Odds, errors="coerce")
     out["Market %"] = (pd.to_numeric(out["Market %"]) * 100).round(1)
     out["Model %"] = (pd.to_numeric(out["Model %"]) * 100).round(1)
@@ -368,7 +384,7 @@ def _odds(v) -> str:
 
 
 def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, sort: str = "Biggest difference",
-               books: list | None = None) -> pd.DataFrame:
+               books: list | None = None, include_started: bool = False) -> pd.DataFrame:
     """One readable row per player/prop (consensus across books) or per book.
 
     Over/under props: book % is no-vig (over and under prices paired).
@@ -379,6 +395,8 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
     d = b.copy()
     if "model_median" not in d:
         d["model_median"] = d.model_pred.where(d.stat != "any_td")
+    if not include_started and "commence" in d:
+        d = d[~started(d.commence).values]           # games that kicked off: their pre-game props are gone
     if game and game != "All games":
         d = d[d.game == game]
     d["Book"] = d.book.map(book_name)

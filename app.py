@@ -689,10 +689,17 @@ with tab_games:
             st.warning("Live lines couldn't be refreshed just now — these are the last ones downloaded. Check your "
                        "Odds API credits (Settings) and connection.")
     from beatnfl.sources import odds as _odds_src
+    g_started = st.toggle("Include games already started", False, key="games_started",
+                          help="Off: only games that haven't kicked off — the ones you can still bet before the game.")
     try:
         gt = research.games_table(season, week, raw, offline=offline)
+        n_gone = int(research.started(gt._kick).sum())
+        if not g_started:
+            gt = gt[~research.started(gt._kick).values]
+        if n_gone and not g_started:
+            st.caption(f"{n_gone} game{'s' if n_gone != 1 else ''} already kicked off this week — hidden.")
         if gt.empty:
-            st.info(f"No games found for {season} week {week}.")
+            st.info(f"No games left to play in {season} week {week}." if n_gone else f"No games found for {season} week {week}.")
         else:
             src = ((f"{research.book_name(book_pick)} via the Odds API" if book_pick else "Odds API — median of all books")
                    if (gt._src == "odds_api").any() else
@@ -700,7 +707,7 @@ with tab_games:
             if book_pick and (gt._src != "odds_api").any():
                 src += f"; games {research.book_name(book_pick)} hasn't posted use the schedule's consensus line"
             st.subheader("Lines")
-            show(gt.drop(columns="_src"), {
+            show(gt.drop(columns=["_src", "_kick"]), {
                 "Spread": st.column_config.Column("Spread", help="Both teams' point spreads. Minus = favourite."),
                 "Moneyline": st.column_config.Column("Moneyline", help="Odds to win outright (American odds)."),
                 "Total": st.column_config.NumberColumn("Total", format="%.1f", help="Combined points over/under line."),
@@ -739,6 +746,8 @@ with tab_games:
 
             st.subheader("Chances: market vs model")
             gp = research.game_probs(season, week, raw, offline=offline)
+            if not g_started:
+                gp = gp[~research.started(gp._kick).values]
             from beatnfl.sources import odds as _odds_src
             gp = gp.join(research.game_best(gp, raw_all, S.my_books))
             gp["Bet slip"] = research.game_slips(gp, raw) if book_pick else gp["Best slip"]
@@ -768,6 +777,7 @@ with tab_games:
                                                                   "(model weighted 25%, market 75%, because the model alone hasn't beaten closing lines)."),
                     "Difference": st.column_config.NumberColumn("Difference", format="%+.1f",
                                                                 help="Model % − Market %, in percentage points. Click a column header to sort."),
+                    "_kick": None,
                     "Best odds": st.column_config.NumberColumn("Best odds", format="%+d",
                                                                help="Highest payout for this side among your sportsbooks (Settings → My sportsbooks), at this line."),
                     "Best book": st.column_config.Column("Best book", help="Where the best odds are. '(at …)' = the most-quoted line, when the line shown is an average."),
@@ -906,14 +916,20 @@ with tab_props:
         b = ss.get("board")
         if b is not None and not b.empty:
             c1, c2, c3, c4 = st.columns(4)
-            games = ["All games"] + sorted(b.game.unique())
+            games = ["All games"] + sorted(b[~research.started(b.commence).values].game.unique()
+                                           if "commence" in b and not ss.get("props_started") else b.game.unique())
             pick_g = c1.selectbox("Game", games, key="props_game")
             books = [research.CONSENSUS] + sorted({research.book_name(x) for x in b.book.unique()})
             pick_b = c2.selectbox("Sportsbook", books, key="props_book")
             pick_s = c3.selectbox("Sort by", ["Biggest difference", "Sportsbook", "Player"], key="props_sort")
             pick_f = c4.selectbox("Show", ["Every prop", "Only where model is higher (Over / Yes)",
                                            "Only where model disagrees (4+ pts)"], key="props_show")
-            view = research.props_view(b, pick_g, pick_b, pick_s, books=S.my_books)
+            p_started = st.toggle("Include games already started", False, key="props_started",
+                                  help="Off: only props for games that haven't kicked off.")
+            gone = sorted(b[research.started(b.commence).values].game.unique()) if "commence" in b else []
+            if gone and not p_started:
+                st.caption(f"Hidden — already kicked off: {', '.join(gone)}.")
+            view = research.props_view(b, pick_g, pick_b, pick_s, books=S.my_books, include_started=p_started)
             if not view.empty:
                 if pick_f.startswith("Only where model is higher"):
                     view = view[view.Difference > 0]
@@ -944,8 +960,8 @@ with tab_props:
                              disabled=picked.empty, key="props_to_parlay"):
                     from beatnfl import parlay as _pl
                     pl_ = ss.setdefault("parlay", [])
-                    for r_ in picked.itertuples():
-                        leg_ = _pl.prop_leg(b, r_._key, r_._side or "Over")
+                    for r_ in picked.to_dict("records"):       # (itertuples renames columns that start with "_")
+                        leg_ = _pl.prop_leg(b, r_["_key"], r_["_side"] or "Over")
                         if leg_ and leg_["id"] not in {x["id"] for x in pl_}:
                             pl_.append(leg_)
                     st.success(f"Parlay has {len(pl_)} legs — open the **Parlay** tab.")
@@ -1054,6 +1070,11 @@ with tab_picks:
                     "2–4 days before kickoff; try again Wednesday or Thursday.")
         else:
             st.success(f"{len(pk_)} props flagged · {inf.get('new', 0)} newly logged · {inf.get('fp_note')}")
+            gone_ = _rs.started(pk_.commence).values if "commence" in pk_ else np.zeros(len(pk_), bool)
+            if gone_.any():
+                st.caption(f"{int(gone_.sum())} of these are for games that already kicked off — hidden here, still graded "
+                           "in the track record.")
+            pk_ = pk_[~gone_]
             show(_rs.picks_view(pk_), {
                 "Best odds": st.column_config.NumberColumn("Best odds", format="%+d", help="Best price for this side among your sportsbooks (Settings → My sportsbooks)."),
                 "Market %": st.column_config.NumberColumn("Market %", format="%.0f%%", help="All books' consensus chance for this side, margin removed."),
@@ -1591,8 +1612,11 @@ def _ask_games(season, week):
     raw = raw_lines()
     if raw is not None and not raw.empty and (raw.book == "draftkings").any():
         raw = raw[raw.book == "draftkings"]
-    return research.games_table(season, week, raw, offline=offline).drop(columns="_src", errors="ignore"), \
-        research.game_probs(season, week, raw, offline=offline)
+    gt = research.games_table(season, week, raw, offline=offline)
+    gp = research.game_probs(season, week, raw, offline=offline)
+    gt = gt.assign(started=research.started(gt._kick).values).drop(columns=["_src", "_kick"], errors="ignore")
+    gp = gp[~research.started(gp._kick).values].drop(columns="_kick", errors="ignore")
+    return gt, gp
 
 
 def _ask_props():
@@ -1688,6 +1712,10 @@ with tab_parlay:
         if changed:
             ss["parlay_v"] = ss.get("parlay_v", 0) + 1
             st.rerun()
+        gone_l = _pl.started_legs(legs)
+        if gone_l:
+            st.error("Already kicked off — books no longer take these before the game (live odds differ): "
+                     + "; ".join(gone_l) + ". Tick Remove to drop them.")
         sg = _pl.same_game(legs)
         if sg:
             st.warning("Same-game legs (" + ", ".join(sg) + "): these results move together, and books price same-game "

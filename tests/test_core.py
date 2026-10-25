@@ -703,16 +703,16 @@ def _board_rows():
     for bk, ov, un in (("draftkings", -115, -105), ("fanduel", 105, -125), ("betmgm", -110, -110)):
         rows.append({"game": "CHI @ ATL", "player": "Drake London", "stat": "rec_yds", "market": "player_reception_yds",
                      "book": bk, "line": 74.5, "price": ov, "under_price": un, "model_pred": 85.0, "model_median": 82.0,
-                     "book_p_over": odds_nv(ov, un), "model_p_over": 0.63, "event_id": "e1", "commence": "2026-10-18T17:00:00Z"})
+                     "book_p_over": odds_nv(ov, un), "model_p_over": 0.63, "event_id": "e1", "commence": "2099-10-18T17:00:00Z"})
     # Bijan rush yds 80.5: model says Under (38% over vs 50%)
     for bk, ov, un in (("draftkings", -110, -110), ("fanduel", -112, -108)):
         rows.append({"game": "CHI @ ATL", "player": "Bijan Robinson", "stat": "rush_yds", "market": "player_rush_yds",
                      "book": bk, "line": 80.5, "price": ov, "under_price": un, "model_pred": 70.0, "model_median": 69.0,
-                     "book_p_over": odds_nv(ov, un), "model_p_over": 0.38, "event_id": "e1", "commence": "2026-10-18T17:00:00Z"})
+                     "book_p_over": odds_nv(ov, un), "model_p_over": 0.38, "event_id": "e1", "commence": "2099-10-18T17:00:00Z"})
     # Kyle Pitts rec 4.5: model only 2 pts off → not flagged
     rows.append({"game": "CHI @ ATL", "player": "Kyle Pitts", "stat": "rec", "market": "player_receptions", "book": "draftkings",
                  "line": 4.5, "price": -110, "under_price": -110, "model_pred": 4.6, "model_median": 4.5,
-                 "book_p_over": 0.5, "model_p_over": 0.52, "event_id": "e1", "commence": "2026-10-18T17:00:00Z"})
+                 "book_p_over": 0.5, "model_p_over": 0.52, "event_id": "e1", "commence": "2099-10-18T17:00:00Z"})
     return pd.DataFrame(rows)
 
 
@@ -1195,3 +1195,29 @@ def test_csv_endpoint_block_page_is_recognised(monkeypatch):
         _dk.load_auto()
     assert "refusing automatic downloads" in e.value.what and "DG 153728" in e.value.what
     assert "Export to CSV" in e.value.fix
+
+
+def test_started_games_are_hidden():
+    from beatnfl import parlay, research
+    b = _board_rows()
+    b.loc[b.player == "Bijan Robinson", "commence"] = "2020-01-01T18:00:00Z"            # this game already kicked off
+    b.loc[b.player == "Bijan Robinson", "game"] = "KC @ DEN"
+    v = research.props_view(b)
+    assert "Bijan Robinson" not in set(v.Player) and "Drake London" in set(v.Player)
+    assert "Bijan Robinson" in set(research.props_view(b, include_started=True).Player)
+    legs = [parlay.prop_leg(b, "KC @ DEN|Bijan Robinson|rush_yds", "Under"), parlay.prop_leg(b, "CHI @ ATL|Drake London|rec_yds")]
+    assert parlay.started_legs(legs) == ["Bijan Robinson Under 80.5 rush yds"]
+    assert research.started(["2020-01-01T00:00:00Z", "2099-01-01T00:00:00Z", None]).tolist() == [True, False, False]
+
+
+def test_rows_ticked_on_props_become_parlay_legs():
+    # the exact path the "Add to parlay" button takes: selected view rows → their hidden key/side → legs
+    from beatnfl import parlay, research
+    b = _board_rows()
+    view = research.props_view(b)
+    legs = [parlay.prop_leg(b, r["_key"], r["_side"] or "Over") for r in view.to_dict("records")]
+    assert all(legs) and {lg["player"] for lg in legs} == {"Drake London", "Bijan Robinson", "Kyle Pitts"}
+    assert {lg["player"]: lg["side"] for lg in legs}["Bijan Robinson"] == "Under"
+    import ast
+    src = (Path(__file__).resolve().parent.parent / "app.py").read_text()
+    assert "r_._key" not in src and "r_._side" not in src                   # itertuples would rename these columns

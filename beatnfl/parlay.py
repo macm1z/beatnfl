@@ -39,7 +39,8 @@ def prop_leg(board: pd.DataFrame, key: str, side: str = "Over") -> dict | None:
     quotes = [{"book": r.book, "line": r.line, "over": r.price, "under": getattr(r, "under_price", np.nan),
                "over_link": getattr(r, "link", None), "under_link": getattr(r, "under_link", None)} for r in x.itertuples()]
     td = stat == "any_td"
-    return {"kind": "prop", "id": f"prop|{key}", "game": game, "player": player, "stat": stat, "line": ln,
+    kick = x.commence.iloc[0] if "commence" in x else None
+    return {"kind": "prop", "id": f"prop|{key}", "game": game, "player": player, "stat": stat, "line": ln, "kick": kick,
             "side": "Yes" if td else (side if side in ("Over", "Under") else "Over"),
             "model_p_over": float(x.model_p_over.iloc[0]) if pd.notna(x.model_p_over.iloc[0]) else np.nan,
             "market_p_over": float(x.book_p_over.median()) if x.book_p_over.notna().any() else np.nan,
@@ -63,6 +64,7 @@ def game_leg(row: dict, raw: pd.DataFrame | None) -> dict:
         quotes = [{"book": q.book, "line": q.line, "over": q.price, "under": np.nan,
                    "over_link": getattr(q, "link", None), "under_link": None} for q in x.itertuples()]
     return {"kind": "game", "id": f"game|{row['Game']}|{row['Bet type']}|{row['Side']}", "game": row["Game"],
+            "kick": str(row.get("_kick")) if row.get("_kick") is not None else None,
             "label": f"{row['Side']} ({row['Bet type'].lower()})", "side": "Bet",
             "model_p_over": row["Model %"] / 100 if pd.notna(row.get("Model %")) else np.nan,
             "market_p_over": row["Market %"] / 100 if pd.notna(row.get("Market %")) else np.nan, "quotes": quotes}
@@ -152,3 +154,11 @@ def same_game(legs: list[dict]) -> list[str]:
     """Games with more than one leg (their combined odds here ignore correlation)."""
     s = pd.Series([lg["game"] for lg in legs])
     return sorted(s[s.duplicated()].unique().tolist())
+
+
+def started_legs(legs: list[dict], now=None) -> list[str]:
+    """Labels of legs whose game has already kicked off."""
+    from .research import started
+    ks = [lg.get("kick") for lg in legs]
+    flags = started(ks, now) if ks else []
+    return [leg_label(lg) for lg, f in zip(legs, flags) if f]
