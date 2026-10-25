@@ -6,7 +6,7 @@ their grades, the Evidence results and the data-status log. It can also build li
 (not saved, nothing entered). Answers say which numbers they used; when the data doesn't cover a
 question the answer says so instead of guessing. Information only — no bets, no contest entry.
 
-Cost: billed by Anthropic per use (tokens). Each answer shows its approximate cost.
+Key: platform.claude.com/settings/keys (pick the Default workspace). Cost: billed by Anthropic per use (tokens). Each answer shows its approximate cost.
 """
 
 from __future__ import annotations
@@ -364,15 +364,19 @@ def _post(key: str, body: dict, session=None) -> dict:
             msg = r.json().get("error", {}).get("message", r.text[:300])
         except Exception:  # noqa: BLE001
             msg = r.text[:300]
+        if "workspace" in msg.lower():
+            raise StepError(STEP, "This API key isn't tied to a workspace.", "Keys that cover every workspace need extra "
+                            "setup the app doesn't use.", "In the Claude Console create a new key and pick the Default "
+                            "workspace for it, then paste that key in Settings.", detail=msg)
         if r.status_code in (401, 403):
             raise StepError(STEP, "Anthropic refused the API key.", "The key is wrong, revoked, or the account has no credit.",
-                            "Check it at console.anthropic.com, paste it in Settings → Anthropic API key, Save.", detail=msg)
+                            "Check it at platform.claude.com/settings/keys, paste it in Settings → Anthropic API key, Save.", detail=msg)
         if r.status_code == 400 and ("thinking" in msg or "output_config" in msg or "effort" in msg) and "thinking" in body:
             body.pop("thinking", None)          # a model without these options — drop them for the rest of this answer
             body.pop("output_config", None)
             continue
         if r.status_code == 400 and "credit" in msg.lower():
-            raise StepError(STEP, "Your Anthropic account is out of credit.", "", "Add credit at console.anthropic.com → Billing.", detail=msg)
+            raise StepError(STEP, "Your Anthropic account is out of credit.", "", "Add credit at platform.claude.com/settings/billing.", detail=msg)
         if r.status_code in (429, 500, 502, 503, 529):
             last = f"HTTP {r.status_code}: {msg}"
             time.sleep(3 * (attempt + 1))
@@ -387,7 +391,7 @@ def ask(key: str, question: str, ctx: Context, history: list[tuple[str, str]] | 
     """Answer one question. history = earlier (question, answer) pairs from this session.
     Returns {"answer", "tools_used", "cost", "tokens", "built"}."""
     if not key:
-        raise StepError(STEP, "No Anthropic API key set.", "", "Get one at console.anthropic.com → API keys, paste it in "
+        raise StepError(STEP, "No Anthropic API key set.", "", "Get one at platform.claude.com/settings/keys, paste it in "
                         "Settings → Anthropic API key (sidebar), and click Save settings.")
     msgs = []
     for q, a in (history or [])[-6:]:              # earlier turns as plain text (keeps requests small and valid)

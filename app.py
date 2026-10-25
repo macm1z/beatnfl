@@ -170,7 +170,7 @@ with st.sidebar:
                               help="Production key from secure.fantasypros.com/api-keys (MVP/HOF). Fills the 'Yours' "
                                    "projection automatically on every Refresh.")
         akey = st.text_input("Anthropic API key (for the Ask tab)", S.anthropic_api_key, type="password",
-                             help="console.anthropic.com → API keys. Billed per question by Anthropic (separate from a "
+                             help="platform.claude.com/settings/keys. Billed per question by Anthropic (separate from a "
                                   "Claude subscription); each answer shows its cost.")
         from beatnfl import ask as _ask
         _mk = list(_ask.MODELS)
@@ -1423,7 +1423,7 @@ with tab_ask:
     st.caption("Ask about this week in plain English — answers come from the app's own data (pool, projections, "
                "injuries, lines, props, your saved lineups and grades, Evidence). Information only.")
     if not S.anthropic_api_key:
-        st.info("To turn this on: get an API key at **console.anthropic.com → API keys**, paste it in **Settings → "
+        st.info("To turn this on: get an API key at **platform.claude.com/settings/keys**, paste it in **Settings → "
                 "Anthropic API key** (sidebar) and click **Save settings**. It's billed per question by Anthropic "
                 "(each answer shows its cost).")
     hist = ss.setdefault("ask_hist", [])

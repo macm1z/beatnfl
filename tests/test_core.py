@@ -1027,6 +1027,10 @@ def test_ask_errors_are_explained_and_thinking_fallback():
     with pytest.raises(StepError) as e:
         ask.ask("k", "q", ctx, session=s)
     assert "refused the API key" in e.value.what
+    s = _FakeSession([_FakeResp(400, {"error": {"message": "anthropic-workspace-id header is required for this key"}})])
+    with pytest.raises(StepError) as e:
+        ask.ask("k", "q", ctx, session=s)
+    assert "Default" in e.value.fix
     s = _FakeSession([_FakeResp(400, {"error": {"message": "thinking type between_tools not supported"}}),
                       _FakeResp(200, {"stop_reason": "end_turn", "usage": {}, "content": [{"type": "text", "text": "ok"}]})])
     assert ask.ask("k", "q", ctx, session=s)["answer"] == "ok"
