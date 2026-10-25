@@ -27,6 +27,7 @@ import pandas as pd
 
 from .config import HOME
 from .errors import StepError
+from .props_backtest import model_information
 from .sources import bettingpros as bp
 
 DIR = HOME / "evidence" / "bettingpros"
@@ -193,6 +194,63 @@ def summarize(graded: pd.DataFrame) -> dict:
     return out
 
 
+def _implied(a) -> float:
+    d = _dec(a)
+    return 1 / d if d == d else np.nan
+
+
+def _mi(d: pd.DataFrame) -> dict:
+    try:
+        return model_information(d)
+    except np.linalg.LinAlgError:          # e.g. every price identical — nothing to separate
+        return {}
+
+
+def info_test(df: pd.DataFrame) -> dict:
+    """Does BettingPros' probability tell us anything the sportsbooks' price doesn't?
+    For every graded prop where their pick is at the consensus line: did the Over hit, vs the market's
+    no-vig chance of the Over (consensus prices, both sides) and BettingPros' chance of the Over.
+    Scored two ways: accuracy of each chance (Brier, lower is better) and the weight BettingPros' view gets
+    once the market price is known (logistic; ≈2× its ± or more = real information). Same test the
+    BeatNFL model failed on 2025 lines."""
+    if df is None or df.empty:
+        return {"n": 0, "verdict": "No graded props yet."}
+    d = df[df.scored.astype(bool) & ~df.push.astype(bool) & df.actual.notna() & df.line.notna()
+           & df.bp_side.isin(["over", "under"]) & pd.to_numeric(df.bp_prob, errors="coerce").notna()
+           & df.over_cons_odds.notna() & df.under_cons_odds.notna()].copy()
+    d = d[(d.rec_line.isna()) | (d.rec_line == d.line)]
+    d = d[d.actual != d.line]
+    if d.empty:
+        return {"n": 0, "verdict": "No graded props with BettingPros win chances and both consensus prices yet."}
+    po, pu = d.over_cons_odds.map(_implied), d.under_cons_odds.map(_implied)
+    d["p_over"] = po / (po + pu)
+    bp_p = pd.to_numeric(d.bp_prob, errors="coerce").clip(0.01, 0.99)
+    d["model_p_over"] = np.where(d.bp_side == "over", bp_p, 1 - bp_p)
+    d["over"] = (d.actual > d.line).astype(int)
+    d = d[d.p_over.notna()]
+    out = {"n": int(len(d)),
+           "brier_market": round(float(((d.p_over - d.over) ** 2).mean()), 4),
+           "brier_bp": round(float(((d.model_p_over - d.over) ** 2).mean()), 4),
+           "info": _mi(d)}
+    out["by_stat"] = pd.DataFrame([{"market": m, "props": len(g),
+                                    "brier_market": round(float(((g.p_over - g.over) ** 2).mean()), 4),
+                                    "brier_bp": round(float(((g.model_p_over - g.over) ** 2).mean()), 4),
+                                    **{f"bp_{k}": v for k, v in _mi(g).items() if k != "n"}}
+                                   for m, g in d.groupby(d.market.fillna("?")) if len(g) >= 50]).sort_values(
+        "props", ascending=False) if len(d) >= 50 else pd.DataFrame()
+    i = out["info"]
+    if not i:
+        out["verdict"] = f"{len(d)} graded props — need at least 200 to test (keep collecting)."
+    elif i["z"] >= 2 and out["brier_bp"] < out["brier_market"]:
+        out["verdict"] = (f"BettingPros adds real information beyond the line ({len(d):,} props; weight {i['coef']:+.2f} ± "
+                          f"{i['se']:.2f}; accuracy {out['brier_bp']:.4f} vs market {out['brier_market']:.4f}).")
+    else:
+        out["verdict"] = (f"BettingPros adds no proven information beyond the line ({len(d):,} props; weight "
+                          f"{i['coef']:+.2f} ± {i['se']:.2f}; accuracy {out['brier_bp']:.4f} vs market "
+                          f"{out['brier_market']:.4f} — lower is better).")
+    return out
+
+
 def snapshot_record(key: str, offline=False, progress=lambda m: None) -> pd.DataFrame:
     """Grade the app's own pre-game snapshots against finished results (uses the archive when present,
     otherwise downloads the finished week). Keeps each pick's LAST snapshot before kickoff."""
@@ -226,7 +284,13 @@ def snapshot_record(key: str, offline=False, progress=lambda m: None) -> pd.Data
 
 def save_result(name: str, summ: dict):
     DIR.mkdir(parents=True, exist_ok=True)
-    js = {k: (v.to_dict("records") if isinstance(v, pd.DataFrame) else v) for k, v in summ.items()}
+    def conv(v):
+        if isinstance(v, pd.DataFrame):
+            return v.to_dict("records")
+        if isinstance(v, dict):
+            return {k: conv(x) for k, x in v.items()}
+        return v
+    js = {k: conv(v) for k, v in summ.items()}
     js["generated"] = time.strftime("%Y-%m-%d %H:%M")
     (DIR / f"record_{name}.json").write_text(json.dumps(js, default=str))
 
@@ -238,6 +302,8 @@ def load_result(name: str) -> dict | None:
     js = json.loads(f.read_text())
     for k in ("by_stars", "by_market", "by_model"):
         js[k] = pd.DataFrame(js.get(k) or [])
+    if isinstance(js.get("info"), dict):
+        js["info"]["by_stat"] = pd.DataFrame(js["info"].get("by_stat") or [])
     return js
 
 
@@ -257,8 +323,12 @@ def daily(key: str, offline=False, progress=lambda m: None) -> dict:
     """The scheduled routine: grow the archive with today's spare allowance, then re-grade both records."""
     season, week = current_week(offline)
     c = collect(key, [season - 1, season], current=(season, week), offline=offline, progress=progress)
-    arch = summarize(grade(load_archive()))
+    A = load_archive()
+    arch = summarize(grade(A))
+    arch["info"] = info_test(A)
     save_result("archive", arch)
-    snap = summarize(snapshot_record(key, offline=offline, progress=progress))
+    G = snapshot_record(key, offline=offline, progress=progress)
+    snap = summarize(G)
+    snap["info"] = info_test(G)
     save_result("snapshots", snap)
     return {"collect": c, "archive": arch["verdict"], "snapshots": snap["verdict"], "season": season, "week": week}

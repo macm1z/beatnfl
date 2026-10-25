@@ -186,3 +186,28 @@ def test_ask_tool_reads_bettingpros_board(fake):
     assert one["count"] == 1 and one["props"][0]["player"] == pname(7)
     none = json.loads(ask.run_tool(ask.Context(), "bettingpros", {}))
     assert "Load BettingPros props" in none["board"]
+
+
+def test_information_test_beyond_the_line():
+    rng = np.random.default_rng(7)
+    n = 1500
+    p_true = rng.uniform(0.3, 0.7, n)
+    over = rng.random(n) < p_true
+    line = 50.5
+    actual = np.where(over, line + 5, line - 5)
+    def frame(bp_p_over):
+        side = np.where(bp_p_over >= 0.5, "over", "under")
+        return pd.DataFrame({"scored": True, "push": False, "actual": actual, "line": line, "rec_line": line,
+                             "bp_side": side, "bp_prob": np.where(side == "over", bp_p_over, 1 - bp_p_over),
+                             "over_cons_odds": over_odds, "under_cons_odds": under_odds, "market": "Rec Yds"})
+    over_odds = rng.choice([-125, -115, -110, -105, 100, 105], n)          # market prices vary, but know nothing
+    under_odds = np.where(over_odds < 0, -110 + (over_odds + 110) * -1, -120)
+    good = bp_record.info_test(frame(p_true))                       # knows the true chance; market says 50/50
+    assert good["info"]["z"] >= 2 and good["brier_bp"] < good["brier_market"] and "adds real information" in good["verdict"]
+    noise = bp_record.info_test(frame(rng.uniform(0.3, 0.7, n)))    # random opinions
+    assert "no proven information" in noise["verdict"]
+    assert not good["by_stat"].empty
+    small = bp_record.info_test(frame(p_true).head(100))
+    assert "need at least 200" in small["verdict"]
+    bp_record.save_result("t", {"verdict": "x", "by_stars": pd.DataFrame(), "info": good})
+    assert not bp_record.load_result("t")["info"]["by_stat"].empty

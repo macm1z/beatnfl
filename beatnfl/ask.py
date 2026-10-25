@@ -233,7 +233,8 @@ def t_bettingpros(ctx, player=None, min_stars=None, market=None, limit=30):
     try:
         from . import bp_record
         rec = {k: bp_record.load_result(k) for k in ("snapshots", "archive")}
-        out["their_track_record"] = {k: {"verdict": v["verdict"], "by_stars": _records(v["by_stars"])} for k, v in rec.items() if v}
+        out["their_track_record"] = {k: {"verdict": v["verdict"], "by_stars": _records(v["by_stars"]),
+                                         "beyond_the_line": (v.get("info") or {}).get("verdict")} for k, v in rec.items() if v}
     except Exception:  # noqa: BLE001
         pass
     return out

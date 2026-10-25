@@ -1275,7 +1275,7 @@ with tab_evidence:
     else:
         from beatnfl import bp_record as _bpr
         from beatnfl.sources import bettingpros as _bps
-        st.caption("Two records: **their archive** (finished weeks from BettingPros, ratings taken at face value) and "
+        st.caption("Used for props only (not DraftKings projections). Two records: **their archive** (finished weeks from BettingPros, ratings taken at face value) and "
                    "**your snapshots** (their board as the app saved it before kickoff — can't be revised later). Graded at "
                    "the best listed price and at the consensus price; break-even at -110 is 52.4%. Requests are limited per "
                    f"day (**{_bps.remaining()}** left today), so the archive grows a few weeks per day — the evening "
@@ -1294,6 +1294,9 @@ with tab_evidence:
             if not res_:
                 continue
             st.markdown(f"*{lab_}* (graded {res_.get('generated', '')}): {res_['verdict']}")
+            inf_ = res_.get("info") or {}
+            if inf_.get("n"):
+                st.markdown(f"Does it know more than the line? **{inf_['verdict']}**")
             cfg_ = {"won_pct": "Won %", "roi_best_pct": "ROI at best price %", "roi_best_se": "± (luck)",
                     "roi_cons_pct": "ROI at consensus %", "roi_cons_se": "± (luck) ",
                     "their_win_prob_pct": "Their win % claim", "picks": "Picks"}
@@ -1309,6 +1312,14 @@ with tab_evidence:
                     t, tc = tidy(res_["by_model"], {"model": "BettingPros model", **cfg_}, ints=("Picks",),
                                  one=("Won %", "ROI at best price %", "± (luck)", "ROI at consensus %", "± (luck) ", "Their win % claim"))
                     show(t, tc)
+                    bs_ = inf_.get("by_stat")
+                    if isinstance(bs_, pd.DataFrame) and not bs_.empty:
+                        st.caption("Information test by market — accuracy of the Over chance (lower is better) and the "
+                                   "weight BettingPros gets once the market price is known (real information ≈ 2× its ±).")
+                        t, tc = tidy(bs_, {"market": "Market", "props": "Props", "brier_market": "Market accuracy",
+                                           "brier_bp": "BettingPros accuracy", "bp_coef": "BP weight", "bp_se": "±",
+                                           "bp_z": "z"}, ints=("Props",), two=("BP weight", "±", "z"))
+                        show(t, tc)
 
     st.markdown("**Props on real sportsbook lines — does the Picks rule hold up?**")
     st.caption("Replays a past season with the model as it stood before that season: each prop's real Wednesday-evening "
