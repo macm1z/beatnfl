@@ -1262,3 +1262,23 @@ def test_yahoo_redirect_uri_and_pasted_address(monkeypatch, tmp_path):
     assert "No sign-in code" in e.value.what
     with pytest.raises(StepError):
         yahoo.connect("cid", "sec", "https://localhost:8000/?code=%E2%80%A6", "https://localhost:8000")   # the "…" placeholder
+
+
+def test_yahoo_signin_catcher_finishes_by_itself(monkeypatch, tmp_path):
+    import socket, time as _t, requests as _rq, urllib3
+    from beatnfl.sources import yahoo
+    urllib3.disable_warnings()
+    s_ = socket.socket(); s_.bind(("127.0.0.1", 0)); port = s_.getsockname()[1]; s_.close()
+    got = []
+    monkeypatch.setattr(yahoo, "connect", lambda cid, sec, code, ru: got.append((code, ru)))
+    ru = f"https://localhost:{port}"
+    assert yahoo.start_catcher("cid", "sec", ru) == "waiting"
+    r = _rq.get(f"https://127.0.0.1:{port}/?code=abc123", verify=False, timeout=10)
+    assert r.status_code == 200 and "connected" in r.text
+    assert got == [("abc123", ru)] and yahoo.CATCH["status"] == "connected"
+    yahoo.stop_catcher()
+    assert yahoo.start_catcher("cid", "sec", "oob") == ""                       # nothing to catch for oob
+    assert yahoo.start_catcher("cid", "sec", ru) == "waiting"
+    r = _rq.get(f"https://127.0.0.1:{port}/", verify=False, timeout=10)
+    assert "without a sign-in code" in r.text and yahoo.CATCH["status"].startswith("error")
+    yahoo.stop_catcher()

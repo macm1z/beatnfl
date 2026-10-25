@@ -97,6 +97,125 @@ def connect(client_id: str, secret: str, code: str, redirect_uri: str = DEFAULT_
     _save(tok)
 
 
+# ---------------------------------------------------------------- automatic sign-in catcher
+# Yahoo sends the browser to https://localhost:8000/?code=… after approval. Instead of making you copy that
+# address, the app listens on that address itself (HTTPS with a certificate made on this computer — the
+# browser warns once that it isn't a public certificate; that's expected for localhost), takes the code
+# and finishes the sign-in. Whatever arrives is also kept, so a failed sign-in can be explained.
+CATCH = {"thread": None, "server": None, "status": "", "last_url": ""}
+_PAGE = ("<html><body style='font-family:-apple-system,Helvetica;padding:40px;max-width:640px'>"
+         "<h2>{title}</h2><p>{body}</p></body></html>")
+
+
+def _cert() -> tuple[str, str]:
+    import subprocess
+    d = HOME / "localhost_cert"
+    crt, key = d / "cert.pem", d / "key.pem"
+    if not (crt.exists() and key.exists()):
+        d.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(crt),
+                            "-days", "3650", "-subj", "/CN=localhost"], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise StepError(STEP, "Couldn't create the local certificate for Yahoo sign-in.", r.stderr[-200:],
+                            "Use the copy-the-address method instead.")
+        try:
+            os.chmod(key, 0o600)
+        except OSError:
+            pass
+    return str(crt), str(key)
+
+
+def start_catcher(client_id: str, secret: str, redirect_uri: str = DEFAULT_REDIRECT) -> str:
+    """Listen on the redirect address (https://localhost:PORT) until a sign-in code arrives. Returns a status note."""
+    import ssl
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    u = urlparse(redirect_uri or DEFAULT_REDIRECT)
+    if u.hostname not in ("localhost", "127.0.0.1") or u.scheme != "https":
+        return ""                                         # not a local https address — nothing to catch
+    if CATCH["thread"] and CATCH["thread"].is_alive():
+        return CATCH["status"] or "waiting"
+    port = u.port or 443
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _reply(self, title, body):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(_PAGE.format(title=title, body=body).encode())
+
+        def do_GET(self):
+            CATCH["last_url"] = self.path
+            q = parse_qs(urlparse(self.path).query)
+            if q.get("code"):
+                try:
+                    connect(client_id, secret, q["code"][0], redirect_uri)
+                    CATCH["status"] = "connected"
+                    self._reply("✅ Yahoo is connected", "Go back to BeatNFL and click <b>Check connection</b> "
+                                "(or reload the page). You can close this tab.")
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                except StepError as e:
+                    CATCH["status"] = "error: " + e.what + " " + (e.why or "")
+                    self._reply("Sign-in didn't finish", f"{e.what} {e.why or ''}<br><br>Go back to BeatNFL and try the "
+                                "sign-in button again.")
+            elif q.get("error"):
+                CATCH["status"] = "error: Yahoo said " + (q.get("error_description") or q["error"])[0]
+                self._reply("Yahoo didn't approve the sign-in", CATCH["status"])
+            else:
+                CATCH["status"] = "error: Yahoo came back without a code (address: " + self.path[:120] + ")"
+                self._reply("Yahoo came back without a sign-in code",
+                            "Go back to BeatNFL — it will show what to check.")
+
+    import socket
+
+    HTTPServer.allow_reuse_address = True
+
+    class Dual(HTTPServer):                     # browsers may try ::1 (IPv6) for "localhost" first
+        address_family = socket.AF_INET6
+
+        def server_bind(self):
+            try:
+                self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+            except OSError:
+                pass
+            super().server_bind()
+    try:
+        srv = Dual(("::", port), H)
+    except OSError:
+        try:
+            srv = HTTPServer(("127.0.0.1", port), H)
+        except OSError:
+            return f"port {port} is busy"
+    crt, key = _cert()
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(crt, key)
+    srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+    CATCH.update(server=srv, status="waiting", last_url="")
+    def run():
+        try:
+            srv.serve_forever()
+        finally:
+            srv.server_close()                  # free the port once the code has arrived (or on stop)
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    CATCH["thread"] = t
+    return "waiting"
+
+
+def stop_catcher():
+    if CATCH.get("server"):
+        try:
+            CATCH["server"].shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+    if CATCH.get("thread"):
+        CATCH["thread"].join(timeout=5)
+    CATCH.update(thread=None, server=None)
+
+
 def connected() -> bool:
     return TOKEN_PATH.exists()
 

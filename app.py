@@ -1195,12 +1195,31 @@ with tab_yahoo:
         if ru.strip() != S.yahoo_redirect_uri:
             S.yahoo_redirect_uri = ru.strip() or yahoo.DEFAULT_REDIRECT
             S.save()
+        try:
+            catch = yahoo.start_catcher(S.yahoo_client_id, S.yahoo_client_secret, S.yahoo_redirect_uri)
+        except StepError as e:
+            catch = ""
+            st.caption(e.what)
         st.link_button("1 · Sign in to Yahoo and approve", yahoo.auth_url(S.yahoo_client_id, S.yahoo_redirect_uri))
-        st.caption("Click the button above (not any address in this text). After you approve on Yahoo, it " +
-                   ("shows a code." if S.yahoo_redirect_uri == "oob" else
-                    "opens a page that won't load — that's expected. Its address starts with `localhost:8000/?code=` "
-                    "followed by a long code of letters and numbers. Copy the **whole address** from the address bar."))
-        code = st.text_input("2 · Paste the code or the whole address here", key="yahoo_code")
+        if catch == "connected" or yahoo.connected():
+            st.success("Connected to Yahoo.")
+            st.rerun()
+        if catch:
+            st.caption("BeatNFL finishes the sign-in by itself. After Yahoo, your browser may warn that the "
+                       "**connection isn't private** — that's BeatNFL's own page on your computer: choose **Show details → "
+                       "visit this website** (Safari) or **Advanced → Proceed to localhost** (Chrome). Then come back and "
+                       "click **Check connection**.")
+            if catch.startswith("error"):
+                st.error(catch[7:] + " — check that the Redirect URI above matches your Yahoo app exactly, then click the "
+                         "sign-in button again.")
+            elif catch.startswith("port"):
+                st.warning(f"Can't listen for Yahoo ({catch}). Use the copy-the-address method below.")
+            st.button("Check connection", key="yahoo_check")
+        else:
+            st.caption("Click the button above. After you approve on Yahoo it " +
+                       ("shows a code — paste it below." if S.yahoo_redirect_uri == "oob" else
+                        "opens a page whose address starts with `localhost:8000/?code=` — copy the whole address."))
+        code = st.text_input("2 · Or paste the code / the whole address here", key="yahoo_code")
         if st.button("Connect", disabled=not code.strip()):
             try:
                 yahoo.connect(S.yahoo_client_id, S.yahoo_client_secret, code, S.yahoo_redirect_uri)
