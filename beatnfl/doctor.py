@@ -80,6 +80,17 @@ def run(out=print) -> bool:
     else:
         out("⏭️  FantasyPros API: no key set (optional — fills 'Yours' automatically).")
 
+    if s.bettingpros_api_key:
+        from .sources import bettingpros as _bp
+
+        def bpc():
+            n = len(_bp.markets(s.bettingpros_api_key))
+            u = _bp.usage()
+            return f"{n} NFL markets · membership {u.get('tier') or 'unknown'} · {u['used']}/{u['limit']} requests used today"
+        res["bettingpros"] = _check("BettingPros (Consumer API)", bpc, out)
+    else:
+        out("⏭️  BettingPros API: no key set (optional — their prop ratings and track record).")
+
     if s.yahoo_client_id and s.yahoo_client_secret:
         from .sources import yahoo
         if yahoo.connected():

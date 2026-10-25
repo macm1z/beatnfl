@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -169,6 +170,14 @@ with st.sidebar:
         fpkey = st.text_input("FantasyPros API key (optional)", S.fantasypros_api_key, type="password",
                               help="Production key from secure.fantasypros.com/api-keys (MVP/HOF). Fills the 'Yours' "
                                    "projection automatically on every Refresh.")
+        bpkey = st.text_input("BettingPros API key (optional)", S.bettingpros_api_key, type="password",
+                              help="Your BettingPros Consumer API key (personal use). Adds BettingPros' prop projections "
+                                   "and star ratings to Props, and builds their graded track record in Evidence.")
+        if S.bettingpros_api_key:
+            from beatnfl.sources import bettingpros as _bpu
+            _u = _bpu.usage()
+            st.caption(f"BettingPros requests today: **{_u['used']}** of {_u['limit']}"
+                       + (f" · membership: {_u['tier']}" if _u.get("tier") else "") + " · resets 8 PM Eastern")
         akey = st.text_input("Anthropic API key (for the Ask tab)", S.anthropic_api_key, type="password",
                              help="platform.claude.com/settings/keys. Billed per question by Anthropic (separate from a "
                                   "Claude subscription); each answer shows its cost.")
@@ -194,6 +203,7 @@ with st.sidebar:
             S.odds_api_key, S.w_paid, S.w_sleeper, S.w_model, S.questionable_haircut = key, wp, ws, wm, qh
             S.fantasypros_api_key = fpkey.strip()
             S.anthropic_api_key, S.ask_model = akey.strip(), amodel
+            S.bettingpros_api_key = bpkey.strip()
             S.use_book_lines = bool(ubl)
             S.yahoo_client_id, S.yahoo_client_secret = yid.strip(), ysec.strip()
             S.save()
@@ -242,7 +252,8 @@ with st.sidebar:
                 st.caption(_note)
         with st.expander("Automatic checks"):
             st.caption("Runs in the background while your Mac is awake and notifies you: Wednesday 7 PM picks list · "
-                       "game-day lineup check after inactives post · closing prices before kickoffs.")
+                       "game-day lineup check after inactives post · closing prices before kickoffs · BettingPros "
+                       "track record each evening (with a BettingPros key).")
             _on = st.toggle("On", value=_sched.installed(), key="auto_checks")
             if _on != _sched.installed():
                 st.info(_sched.install(_on))
@@ -891,6 +902,76 @@ with tab_props:
                        "**no forecast** = player ruled out or too little history. Click any column header to sort. "
                        "Information only.")
 
+    st.subheader("BettingPros")
+    if not S.bettingpros_api_key:
+        st.caption("Add your BettingPros API key in Settings to see their prop projections and star ratings here.")
+    else:
+        from beatnfl import bp_record as _bpr
+        from beatnfl.sources import bettingpros as _bps
+        st.caption(f"Their projection, recommended side and 1–5★ rating for every prop on their board. Each load uses "
+                   f"a few requests (you have **{_bps.remaining()}** left today) and is saved as a pre-game snapshot for "
+                   "the track record in Evidence. Whether their stars actually win: Evidence → BettingPros track record.")
+        if st.button("Load BettingPros props"):
+            with st.spinner("Pulling BettingPros' board…"):
+                try:
+                    bdf, binfo = _bps.props(S.bettingpros_api_key, season, week, completed=False, offline=offline)
+                    ss["bp"], ss["bp_week"] = bdf, (season, week)
+                    n_s = _bpr.save_snapshot(bdf)
+                    st.success(f"{len(bdf)} props ({binfo['pages']} pages, {binfo['requests_left']} requests left today)"
+                               + (f" · saved for the track record" if n_s else ""))
+                except StepError as e:
+                    st.error(e.as_text())
+        bdf = ss.get("bp")
+        if bdf is not None and not bdf.empty and ss.get("bp_week") == (season, week):
+            v = bdf.copy()
+            fc_ = ss.get("fc")
+            col_ = {"pass_yds": "p_pass_yds", "rush_yds": "p_rush_yds", "rec_yds": "p_rec_yds", "rec": "p_rec",
+                    "pass_att": "p_pass_att", "rush_att": "p_rush_att", "pass_cmp": "p_pass_cmp"}
+            v["model"] = np.nan
+            if fc_ is not None and not fc_.empty:
+                from beatnfl.names import norm_name as _nn
+                f_ = fc_.assign(nn=fc_.name.map(_nn)).drop_duplicates("nn").set_index("nn")
+                for st_, c_ in col_.items():
+                    if c_ in f_:
+                        m_ = v.stat == st_
+                        v.loc[m_, "model"] = v.loc[m_, "nn"].map(f_[c_])
+            v["agree"] = np.where(v.model.isna() | v.bp_side.isna() | v.line.isna(), "",
+                                  np.where((v.model > v.line) == (v.bp_side == "over"), "agrees", "disagrees"))
+            v["best"] = [(f"{int(o):+d}" if pd.notna(o) else "") for o in v.rec_odds]
+            k1, k2, k3 = st.columns([1, 3, 2])
+            min_s = k1.selectbox("Stars", ["Any", "3+", "4+", "5"], key="bp_stars")
+            mks = k2.multiselect("Markets", sorted(v.market.dropna().unique()), [], placeholder="All markets", key="bp_mk")
+            bq = k3.text_input("Find player", "", placeholder="Name…", key="bp_q")
+            if min_s != "Any":
+                v = v[pd.to_numeric(v.bp_stars, errors="coerce") >= float(min_s[0])]
+            if mks:
+                v = v[v.market.isin(mks)]
+            if bq.strip():
+                v = v[v.player.str.contains(bq.strip(), case=False, regex=False)]
+            v = v.sort_values(["bp_stars", "bp_ev"], ascending=False, na_position="last")
+            out_ = v.rename(columns={"player": "Player", "team": "Team", "market": "Market", "line": "Line",
+                                     "bp_proj": "BP projection", "bp_side": "BP side", "bp_stars": "Stars",
+                                     "bp_prob": "BP win %", "bp_ev": "BP EV %", "best": "Best odds",
+                                     "model": "Our model (avg)", "agree": "Our model"})
+            out_["BP win %"] = pd.to_numeric(out_["BP win %"], errors="coerce") * 100
+            out_["BP EV %"] = pd.to_numeric(out_["BP EV %"], errors="coerce") * 100
+            cols_ = ["Player", "Team", "Market", "Line", "BP projection", "BP side", "Stars", "BP win %", "BP EV %",
+                     "Best odds", "Our model (avg)", "Our model"]
+            show(out_[cols_], {
+                "BP projection": st.column_config.NumberColumn("BP projection", format="%.1f"),
+                "Stars": st.column_config.NumberColumn("Stars", format="%d★", help="BettingPros' 1–5 rating (Plus/Elite)."),
+                "BP win %": st.column_config.NumberColumn("BP win %", format="%.0f%%", help="Their chance the recommended side wins."),
+                "BP EV %": st.column_config.NumberColumn("BP EV %", format="%+.1f%%", help="Their expected return at the best listed price."),
+                "Best odds": st.column_config.Column("Best odds", help="Best price for their side across the books they track — "
+                                                     "not every book is available in your state."),
+                "Our model (avg)": st.column_config.NumberColumn("Our model (avg)", format="%.1f",
+                                                                 help="BeatNFL's average forecast (Forecast every player first)."),
+                "Our model": st.column_config.Column("Our model", help="Whether our forecast is on the same side of the line.")},
+                 height=min(700, 38 + 35 * len(out_)))
+            if pd.to_numeric(bdf.bp_stars, errors="coerce").isna().all():
+                st.caption("No star ratings in this response — ratings, win % and EV come with a Plus or Elite membership.")
+            st.caption("Information only. Their record so far: Evidence → BettingPros track record.")
+
 # ------------------------------------------------------------------ PICKS
 with tab_picks:
     from beatnfl import research as _rs
@@ -1188,6 +1269,47 @@ with tab_evidence:
         st.caption(f"Average miss on the final margin: market {g['mae_margin']['spread_line']:.2f}, model "
                    f"{g['mae_margin']['model_spread']:.2f} points. On the total: market {g['mae_total']['total_line']:.2f}, "
                    f"model {g['mae_total']['model_total']:.2f}. The market is more accurate.")
+    st.markdown("**BettingPros track record — do their star ratings win at real prices?**")
+    if not S.bettingpros_api_key:
+        st.caption("Add your BettingPros API key in Settings to build this.")
+    else:
+        from beatnfl import bp_record as _bpr
+        from beatnfl.sources import bettingpros as _bps
+        st.caption("Two records: **their archive** (finished weeks from BettingPros, ratings taken at face value) and "
+                   "**your snapshots** (their board as the app saved it before kickoff — can't be revised later). Graded at "
+                   "the best listed price and at the consensus price; break-even at -110 is 52.4%. Requests are limited per "
+                   f"day (**{_bps.remaining()}** left today), so the archive grows a few weeks per day — the evening "
+                   "automatic check does this for you.")
+        if st.button("Collect finished weeks now (uses today's spare requests)"):
+            with st.spinner("Downloading finished weeks and grading…"):
+                try:
+                    r_bp = _bpr.daily(S.bettingpros_api_key, offline=offline)
+                    st.success(f"{r_bp['collect']['weeks_done']} finished weeks collected "
+                               f"({len(r_bp['collect']['fetched_now'])} new) · {r_bp['collect']['requests_left']} requests left today"
+                               + (" · stopped at today's limit — continues tomorrow" if r_bp["collect"]["stopped"] else ""))
+                except StepError as e:
+                    st.error(e.as_text())
+        for nm_, lab_ in (("snapshots", "Your pre-game snapshots"), ("archive", "BettingPros' archive")):
+            res_ = _bpr.load_result(nm_)
+            if not res_:
+                continue
+            st.markdown(f"*{lab_}* (graded {res_.get('generated', '')}): {res_['verdict']}")
+            cfg_ = {"won_pct": "Won %", "roi_best_pct": "ROI at best price %", "roi_best_se": "± (luck)",
+                    "roi_cons_pct": "ROI at consensus %", "roi_cons_se": "± (luck) ",
+                    "their_win_prob_pct": "Their win % claim", "picks": "Picks"}
+            if not res_["by_stars"].empty:
+                t, tc = tidy(res_["by_stars"], {"stars": "Stars", **cfg_}, ints=("Stars", "Picks"),
+                             one=("Won %", "ROI at best price %", "± (luck)", "ROI at consensus %", "± (luck) ", "Their win % claim"))
+                show(t, tc)
+            if not res_["by_market"].empty:
+                with st.expander(f"{lab_} by market and by model"):
+                    t, tc = tidy(res_["by_market"], {"market": "Market", **cfg_}, ints=("Picks",),
+                                 one=("Won %", "ROI at best price %", "± (luck)", "ROI at consensus %", "± (luck) ", "Their win % claim"))
+                    show(t, tc)
+                    t, tc = tidy(res_["by_model"], {"model": "BettingPros model", **cfg_}, ints=("Picks",),
+                                 one=("Won %", "ROI at best price %", "± (luck)", "ROI at consensus %", "± (luck) ", "Their win % claim"))
+                    show(t, tc)
+
     st.markdown("**Props on real sportsbook lines — does the Picks rule hold up?**")
     st.caption("Replays a past season with the model as it stood before that season: each prop's real Wednesday-evening "
                "price and closing price from every US book (Odds API historical data, paid plans). Picks = model differs "
@@ -1365,7 +1487,7 @@ with tab_status:
         from beatnfl import doctor, update as _u
         rep = [f"BeatNFL {__version__} · commit {(_u.installed() or 'unknown')[:7]} · {platform.platform()} · Python {platform.python_version()}",
                "Keys set: " + ", ".join(f"{k}={'yes' if getattr(S, k) else 'no'}" for k in
-                                          ("odds_api_key", "fantasypros_api_key", "anthropic_api_key", "yahoo_client_id", "yahoo_client_secret", "github_token")),
+                                          ("odds_api_key", "fantasypros_api_key", "anthropic_api_key", "bettingpros_api_key", "yahoo_client_id", "yahoo_client_secret", "github_token")),
                "", "== Source checks =="]
         doctor.run(rep.append)
         stt_ = storage.data_status()
@@ -1456,7 +1578,8 @@ with tab_ask:
         r_ = ss.get("run")
         season_, week_ = ((r_.season, r_.week) if r_ is not None and r_.season else ss.get("current_week", (None, None)))
         ctx_ = _ask.Context(run=r_, season=season_, week=week_, offline=offline,
-                            games=lambda: _ask_games(season_, week_), forecasts=lambda: ss.get("fc"), props=_ask_props)
+                            games=lambda: _ask_games(season_, week_), forecasts=lambda: ss.get("fc"), props=_ask_props,
+                            bettingpros=lambda: ss.get("bp"))
         with st.status("Thinking…", expanded=False) as stt_:
             try:
                 res_ = _ask.ask(S.anthropic_api_key, q_, ctx_, [(h["q"], h["a"]) for h in hist], model=S.ask_model,

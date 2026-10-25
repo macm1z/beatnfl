@@ -170,7 +170,17 @@ def test_app_every_button(live, monkeypatch):
     s = Settings.load()
     s.odds_api_key, s.yahoo_client_id, s.yahoo_client_secret, s.fantasypros_api_key = "k", "cid", "sec", "fp-key"
     s.anthropic_api_key = "ak"
+    s.bettingpros_api_key = "good"
     s.save()
+    # BettingPros: FIXTURE server for its URLs only; everything else goes through untouched
+    from test_bettingpros import FakeBP
+    from beatnfl import net as _net
+    from beatnfl.sources import bettingpros as _bps
+    _fbp, _real_get = FakeBP(), _net.requests.get
+
+    def _get(url, *a, **k):
+        return _fbp.get(url, k.get("params"), k.get("timeout"), k.get("headers")) if url.startswith(_bps.BASE) else _real_get(url, *a, **k)
+    monkeypatch.setattr(_net.requests, "get", _get)
     from beatnfl import ask as _ask
     _replies = []
 
@@ -222,6 +232,18 @@ def test_app_every_button(live, monkeypatch):
         sb = at.selectbox(key=key)
         sb.set_value(sb.options[1]).run()
         assert not at.exception, f"{key}: {[e.value for e in at.exception]}"
+    # BettingPros: load this week's board (saved as a snapshot) and build the record
+    [b for b in at.button if b.label == "Load BettingPros props"][0].click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert len(at.session_state["bp"]) == 60
+    at.selectbox(key="bp_stars").set_value("4+").run()
+    assert not at.exception, [e.value for e in at.exception]
+    [b for b in at.button if b.label.startswith("Collect finished weeks now")][0].click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert not [e.value for e in at.error if "BettingPros" in e.value], [e.value for e in at.error]
+    from beatnfl import bp_record as _bpr
+    assert _bpr.load_result("archive") and _bpr.load_result("snapshots")
+    assert any("BettingPros' archive" in m.value for m in at.markdown)
     # contest types: each builds; single entry gives best + 2 backups, multi-entry the full set
     for ct, n in (("cash", 3), ("multi", None), ("se", 3)):
         at.radio(key="contest").set_value(ct).run()
@@ -252,7 +274,7 @@ def test_app_every_button(live, monkeypatch):
     assert any("paused by the credit limit" in m.value for m in at.markdown)
     s2 = Settings.load()
     assert s2.pos_weights, "Use these weights did not save per-position weights"
-    s2.odds_api_key = s2.yahoo_client_id = s2.yahoo_client_secret = s2.fantasypros_api_key = s2.anthropic_api_key = ""
+    s2.odds_api_key = s2.yahoo_client_id = s2.yahoo_client_secret = s2.fantasypros_api_key = s2.anthropic_api_key = s2.bettingpros_api_key = ""
     s2.pos_weights, s2.stat_weights = {}, {}
     s2.save()
 

@@ -3,6 +3,8 @@
   Midweek check   Wednesday 7:00 PM — builds the props picks list, logs it, and shows a Mac notification.
   Game-day check  after the inactive lists post (Thu 7:00 PM, Sun 11:50 AM / 3:10 PM / 7:00 PM, Mon 7:00 PM)
                   — re-checks statuses and notifies you if a player in this week's saved lineups is ruled out.
+  BettingPros     every evening 9:15 PM — grows the BettingPros track record with the day's spare
+                  allowance; Wed 8 PM and Sun 11:40 AM also save the week's board (pre-game ratings).
   Closing prices  shortly before each kickoff window (Thu 6:30 PM, Sun 11:45 AM / 3:15 PM / 7:30 PM,
                   Mon 7:30 PM) — records the last prices for games that have logged picks, for grading.
 
@@ -29,6 +31,10 @@ JOBS = {
                                                           {"Weekday": 0, "Hour": 15, "Minute": 10},
                                                           {"Weekday": 0, "Hour": 19, "Minute": 0},
                                                           {"Weekday": 1, "Hour": 19, "Minute": 0}]),
+    # BettingPros record: every evening after the daily allowance resets (midnight UTC)
+    "com.beatnfl.bettingpros": (["bettingpros"], [{"Weekday": d, "Hour": 21, "Minute": 15} for d in range(7)]),
+    "com.beatnfl.bpsnapshot": (["bettingpros", "--snapshot"], [{"Weekday": 3, "Hour": 20, "Minute": 0},
+                                                              {"Weekday": 0, "Hour": 11, "Minute": 40}]),
     "com.beatnfl.close": (["close", "--notify"], [{"Weekday": 4, "Hour": 18, "Minute": 30},
                                                   {"Weekday": 0, "Hour": 11, "Minute": 45},
                                                   {"Weekday": 0, "Hour": 15, "Minute": 15},
@@ -79,7 +85,13 @@ def keep_in_sync() -> str | None:
     """If the checks are on and this Mac's time zone changed since they were scheduled (travel),
     reschedule them so they still fire at the right Eastern times. Returns a note when it did."""
     from .config import local_tz
-    if not (supported() and installed()):
+    if not supported():
+        return None
+    some = any((AGENTS / f"{k}.plist").exists() for k in JOBS)
+    if some and not installed():            # checks were on before a new one was added — add it
+        install(True)
+        return "Automatic checks updated (BettingPros record added)."
+    if not installed():
         return None
     tz = local_tz()
     try:

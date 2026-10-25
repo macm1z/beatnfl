@@ -49,7 +49,8 @@ it, say exactly what's missing and where in the app to load it (e.g. "Props tab 
 - Projections: "Combined" is what lineups use (weighted blend of FantasyPros, Sleeper and the BeatNFL model; the \
 model is already moved toward sportsbook prop lines). Floor/Ceiling = model's 15th/85th percentile.
 - Be honest about uncertainty. The Evidence results show what has and hasn't been proven: props and game picks have \
-NOT shown a proven edge over the sportsbooks; say so when relevant rather than hyping a pick.
+NOT shown a proven edge over the sportsbooks; say so when relevant rather than hyping a pick. For BettingPros star \
+ratings, quote their graded track record (bettingpros tool) — a rating is not evidence by itself.
 - For lineup requests use build_lineups (contest "cash" or "se" for single entry unless asked otherwise). Lineups you \
 build are not saved; tell the user they can use the "Use on This week" button under your answer to save/export them.
 - Times are US Eastern. Money in dollars. This week is {season} week {week}."""
@@ -64,6 +65,7 @@ class Context:
     games: Callable[[], tuple] | None = None            # → (lines table, chances table)
     forecasts: Callable[[], pd.DataFrame | None] | None = None
     props: Callable[[], pd.DataFrame | None] | None = None
+    bettingpros: Callable[[], pd.DataFrame | None] | None = None
     offline: bool = False
     built: dict | None = None                          # last build_lineups result during this question (pipeline dict)
 
@@ -211,6 +213,32 @@ def t_props(ctx, player=None, game=None, limit=30):
     return {"rows": _records(d, limit=min(int(limit or 30), 80)), "count": int(len(d))}
 
 
+def t_bettingpros(ctx, player=None, min_stars=None, market=None, limit=30):
+    b = ctx.bettingpros() if ctx.bettingpros else None
+    out = {}
+    if b is None or b.empty:
+        out["board"] = "BettingPros props aren't loaded this session (Props tab → Load BettingPros props)."
+    else:
+        d = b
+        if player:
+            d = _find(d, player, "player")
+        if min_stars:
+            d = d[pd.to_numeric(d.bp_stars, errors="coerce") >= float(min_stars)]
+        if market:
+            d = d[d.market.astype(str).str.contains(str(market), case=False, regex=False)]
+        d = d.sort_values(["bp_stars", "bp_ev"], ascending=False, na_position="last")
+        out["props"] = _records(d, ["player", "team", "market", "line", "bp_proj", "bp_side", "bp_stars", "bp_prob",
+                                    "bp_ev", "rec_odds", "rec_line", "mkt_proj"], limit=min(int(limit or 30), 60))
+        out["count"] = int(len(d))
+    try:
+        from . import bp_record
+        rec = {k: bp_record.load_result(k) for k in ("snapshots", "archive")}
+        out["their_track_record"] = {k: {"verdict": v["verdict"], "by_stars": _records(v["by_stars"])} for k, v in rec.items() if v}
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def t_saved_sets(ctx):
     from . import storage
     s = storage.list_lineup_sets()
@@ -308,6 +336,10 @@ TOOLS = {
               "chances for each side.", {}, []),
     "props": (t_props, "Player prop lines loaded on the Props tab, with the model's forecast and chances.", {
         "player": {"type": "string"}, "game": {"type": "string", "description": "e.g. KC or DEN@KC"},
+        "limit": {"type": "integer"}}, []),
+    "bettingpros": (t_bettingpros, "BettingPros' props for this week (their projection, recommended side, 1–5 star "
+                    "rating, win probability, EV, best price) plus their graded track record so far.", {
+        "player": {"type": "string"}, "min_stars": {"type": "number"}, "market": {"type": "string"},
         "limit": {"type": "integer"}}, []),
     "saved_sets": (t_saved_sets, "List the user's saved lineup sets (id, name, week, count).", {}, []),
     "saved_set": (t_saved_set, "One saved lineup set's lineups; grade=true adds real results after the games "

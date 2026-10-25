@@ -99,6 +99,31 @@ def cmd_midweek(a):
         schedule.notify("BeatNFL midweek check", msg + (f" Top: {top}" if top else "") + " Open BeatNFL → Picks.")
 
 
+def cmd_bettingpros(a):
+    """Daily: grow the BettingPros track record with spare allowance; on Wed/Sun mornings also save the board."""
+    from . import bp_record, schedule, storage
+    from .config import Settings
+    from .errors import StepError
+    s = Settings.load()
+    if not s.bettingpros_api_key:
+        print("No BettingPros key set — nothing to do.")
+        return
+    try:
+        if a.snapshot:
+            r0 = bp_record.snapshot_now(s.bettingpros_api_key, progress=print)
+            print(f"Saved {r0['rows']} BettingPros props for {r0['season']} week {r0['week']}.")
+        r = bp_record.daily(s.bettingpros_api_key, progress=print)
+    except StepError as e:
+        print(e.as_text())
+        storage.log_status("BettingPros record", "fail", e.what)
+        sys.exit(1)
+    msg = (f"Archive: {r['collect']['weeks_done']} finished weeks collected ({len(r['collect']['fetched_now'])} new today, "
+           f"{r['collect']['requests_left']} requests left). {r['archive']}")
+    print(msg)
+    print("Pre-game snapshots:", r["snapshots"])
+    storage.log_status("BettingPros record", "ok", msg)
+
+
 def cmd_close(a):
     from . import research, storage
     from .config import Settings
@@ -184,12 +209,15 @@ def main():
     cl = sub.add_parser("close")
     cl.add_argument("--notify", action="store_true")
     cl.add_argument("--hours", type=float, default=4.0, help="games starting within this many hours")
+    bpc = sub.add_parser("bettingpros", help="grow and re-grade the BettingPros track record (daily job)")
+    bpc.add_argument("--snapshot", action="store_true", help="also save this week's board before kickoff")
+    bpc.add_argument("--notify", action="store_true")
     u = sub.add_parser("update")
     u.add_argument("repo", nargs="?", help="owner/name (default: the one in Settings)")
     a = p.parse_args()
     {"run": cmd_run, "doctor": cmd_doctor, "backtest": cmd_backtest, "grade": cmd_grade, "app": cmd_app, "update": cmd_update,
      "midweek": cmd_midweek, "close": cmd_close, "backtest-props": cmd_backtest_props,
-     "gamecheck": cmd_gamecheck}.get(
+     "gamecheck": cmd_gamecheck, "bettingpros": cmd_bettingpros}.get(
         a.cmd or "app", cmd_app)(a)
 
 
