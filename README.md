@@ -35,7 +35,7 @@ You can also open the app with **Start BeatNFL.command** (or `.bat`). It opens i
 
 ## Each week
 
-Tabs: **This week** (pool and lineups) · **Saved lineups** (rename, delete, remove duplicates, filter by player) · **Games** (spread, moneyline and total chances: market vs model) · **Props** · **My Yahoo team** · **Evidence** · **Load data** · **Data status**.
+Tabs: **This week** (pool and lineups) · **Ask** (questions in plain English, answered from the app's data) · **Saved lineups** (rename, delete, remove duplicates, filter by player) · **Games** (spread, moneyline and total chances: market vs model) · **Props** · **My Yahoo team** · **Evidence** · **Load data** · **Data status**.
 
 1. **⟳ Refresh** (top right). This loads and checks the slate, then injuries, lines and projections, then blends them into the **Combined** projection and freezes the forecast. Anything that needs attention shows in a fold-out on *This week*; the full step log is on *Load data*, which is also where you pick a different slate, upload a salary file or paste your own projections.
 2. **Review the pool.** Filter by position or team, lock or exclude players. Hover a column name to see what it means.
@@ -53,6 +53,8 @@ Tabs: **This week** (pool and lineups) · **Saved lineups** (rename, delete, rem
 - **Odds API key** (free at the-odds-api.com): add it in Settings for live lines and props. Without it, lineups still work.
 
 **Sportsbook lines in the model (step 4d):** with the Odds API key set, each Refresh reads the books' player prop lines (yards, receptions, anytime TD) for the slate and moves the model's DraftKings projection toward them — the *Book lines* column shows by how much. On unseen 2025 weeks the lines out-predicted the model on every yardage stat, and folding them in lowered the DK-points miss. About 5 credits per game, reused for 3 hours. Turn off in Settings.
+
+**Ask:** type a question on the *Ask* tab — "best value RBs under $6K?", "why is Bijan projected so high?", "build my cash lineup with Bo Nix locked", "how did my lineups do last week?". Claude answers from what the app has loaded (pool, projection sources, injuries, lines, props, saved lineups and grades, Evidence) and says when something isn't loaded. Lineups it builds can be sent to *This week* to save or download. Needs an Anthropic API key (console.anthropic.com → API keys) in Settings; billed per question by Anthropic, and each answer shows its cost. Choose the model in Settings (Sonnet 5.5 default; Haiku 5.5 is cheapest).
 
 **Grade your lineups:** *Saved lineups → open a set → 📊 Grade against actual results* (after the games are final, usually Tuesday) shows each lineup's real DraftKings points vs projection, every player's real score and how many lineups he was in, and the best lineup that was possible on that slate in hindsight.
 

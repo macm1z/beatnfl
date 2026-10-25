@@ -169,6 +169,13 @@ with st.sidebar:
         fpkey = st.text_input("FantasyPros API key (optional)", S.fantasypros_api_key, type="password",
                               help="Production key from secure.fantasypros.com/api-keys (MVP/HOF). Fills the 'Yours' "
                                    "projection automatically on every Refresh.")
+        akey = st.text_input("Anthropic API key (for the Ask tab)", S.anthropic_api_key, type="password",
+                             help="console.anthropic.com → API keys. Billed per question by Anthropic (separate from a "
+                                  "Claude subscription); each answer shows its cost.")
+        from beatnfl import ask as _ask
+        _mk = list(_ask.MODELS)
+        amodel = st.selectbox("Ask model", _mk, index=_mk.index(S.ask_model) if S.ask_model in _mk else 0,
+                              format_func=lambda m: _ask.MODELS[m][0])
         yid = st.text_input("Yahoo Client ID (optional)", S.yahoo_client_id, type="password")
         ysec = st.text_input("Yahoo Client Secret (optional)", S.yahoo_client_secret, type="password")
         st.caption("Blend weights for the **Combined** projection" +
@@ -186,6 +193,7 @@ with st.sidebar:
         if st.button("Save settings"):
             S.odds_api_key, S.w_paid, S.w_sleeper, S.w_model, S.questionable_haircut = key, wp, ws, wm, qh
             S.fantasypros_api_key = fpkey.strip()
+            S.anthropic_api_key, S.ask_model = akey.strip(), amodel
             S.use_book_lines = bool(ubl)
             S.yahoo_client_id, S.yahoo_client_secret = yid.strip(), ysec.strip()
             S.save()
@@ -286,8 +294,8 @@ if refresh:
     ss["run_at"] = pd.Timestamp.now(tz=TZ).strftime("%a %-I:%M %p")
     st.rerun()
 
-tab_week, tab_saved, tab_games, tab_props, tab_picks, tab_yahoo, tab_evidence, tab_load, tab_status = st.tabs(
-    ["This week", "Saved lineups", "Games", "Props", "Picks", "My Yahoo team", "Evidence", "Load data", "Data status"])
+tab_week, tab_ask, tab_saved, tab_games, tab_props, tab_picks, tab_yahoo, tab_evidence, tab_load, tab_status = st.tabs(
+    ["This week", "Ask", "Saved lineups", "Games", "Props", "Picks", "My Yahoo team", "Evidence", "Load data", "Data status"])
 
 # ------------------------------------------------------------------ THIS WEEK
 with tab_week:
@@ -336,7 +344,7 @@ with tab_week:
                      "from their projected stats), or a table you pasted / uploaded on the Load data tab.",
             "Sleeper": "Sleeper's free published projection, scored with DraftKings rules. How it compares to the "
                        "model historically: Evidence tab → Sleeper vs model.",
-            "Model": "BeatNFL's own forecast. Gradient-boosted model trained on every NFL game since 2018 (nflverse): "
+            "Model": "BeatNFL's own forecast. Gradient-boosted model trained on every NFL game since 2012 (nflverse): "
                      "recent usage (snaps, targets, carries, weighted toward recent games), touches freed by injured "
                      "teammates, team pass/run volume, the opponent's points allowed to the position, and the "
                      "betting-implied team total. Accuracy: Evidence tab.",
@@ -1357,7 +1365,7 @@ with tab_status:
         from beatnfl import doctor, update as _u
         rep = [f"BeatNFL {__version__} · commit {(_u.installed() or 'unknown')[:7]} · {platform.platform()} · Python {platform.python_version()}",
                "Keys set: " + ", ".join(f"{k}={'yes' if getattr(S, k) else 'no'}" for k in
-                                          ("odds_api_key", "fantasypros_api_key", "yahoo_client_id", "yahoo_client_secret", "github_token")),
+                                          ("odds_api_key", "fantasypros_api_key", "anthropic_api_key", "yahoo_client_id", "yahoo_client_secret", "github_token")),
                "", "== Source checks =="]
         doctor.run(rep.append)
         stt_ = storage.data_status()
@@ -1387,3 +1395,76 @@ with tab_status:
     if LOG_PATH.exists():
         with st.expander("Technical log (last 60 lines)"):
             st.code("\n".join(LOG_PATH.read_text().splitlines()[-60:]))
+
+
+# ------------------------------------------------------------------ ASK
+def _ask_games(season, week):
+    from beatnfl import research
+    raw = raw_lines()
+    if raw is not None and not raw.empty and (raw.book == "draftkings").any():
+        raw = raw[raw.book == "draftkings"]
+    return research.games_table(season, week, raw, offline=offline).drop(columns="_src", errors="ignore"), \
+        research.game_probs(season, week, raw, offline=offline)
+
+
+def _ask_props():
+    b = ss.get("board")
+    if b is None or b.empty:
+        return None
+    try:
+        from beatnfl import research
+        return research.props_view(b)
+    except Exception:  # noqa: BLE001
+        return b
+
+
+with tab_ask:
+    from beatnfl import ask as _ask
+    st.caption("Ask about this week in plain English — answers come from the app's own data (pool, projections, "
+               "injuries, lines, props, your saved lineups and grades, Evidence). Information only.")
+    if not S.anthropic_api_key:
+        st.info("To turn this on: get an API key at **console.anthropic.com → API keys**, paste it in **Settings → "
+                "Anthropic API key** (sidebar) and click **Save settings**. It's billed per question by Anthropic "
+                "(each answer shows its cost).")
+    hist = ss.setdefault("ask_hist", [])
+    st.caption("Try: *Best value RBs under $6K?* · *Why is Bijan projected so high?* · *Build my cash lineup with "
+                "Bo Nix locked* · *How did my lineups do last week?* · *Which projection source has been most accurate?*")
+    for i, h in enumerate(hist):
+        with st.chat_message("user"):
+            st.markdown(h["q"])
+        with st.chat_message("assistant"):
+            st.markdown(h["a"])
+            b = h.get("built")
+            if b and b["result"].lineups and ss.get("run") is not None:
+                st.dataframe(export.lineup_table(b["result"].lineups, ss["run"].pool), hide_index=True, width="stretch")
+                if st.button("Use on This week", key=f"ask_use_{i}",
+                             help="Puts these lineups in This week's Build area, where you can Save and download the DK CSV."):
+                    ss["lineups"], ss["saved_info"] = b, None
+                    st.success("Done — open **This week** to save or download them.")
+            meta = []
+            if h.get("tools"):
+                meta.append("looked up: " + ", ".join(dict.fromkeys(t.replace("_", " ") for t in h["tools"])))
+            if h.get("cost") is not None:
+                meta.append(f"≈ ${h['cost']:.3f}")
+            if meta:
+                st.caption(" · ".join(meta))
+    if hist and st.button("Clear conversation", key="ask_clear"):
+        ss["ask_hist"] = []
+        st.rerun()
+    q_ = st.chat_input("Ask about this week…", key="ask_q", disabled=not S.anthropic_api_key)
+    if q_:
+        r_ = ss.get("run")
+        season_, week_ = ((r_.season, r_.week) if r_ is not None and r_.season else ss.get("current_week", (None, None)))
+        ctx_ = _ask.Context(run=r_, season=season_, week=week_, offline=offline,
+                            games=lambda: _ask_games(season_, week_), forecasts=lambda: ss.get("fc"), props=_ask_props)
+        with st.status("Thinking…", expanded=False) as stt_:
+            try:
+                res_ = _ask.ask(S.anthropic_api_key, q_, ctx_, [(h["q"], h["a"]) for h in hist], model=S.ask_model,
+                                progress=lambda m: stt_.update(label=m))
+                hist.append({"q": q_, "a": res_["answer"], "tools": res_["tools_used"], "cost": res_["cost"],
+                             "built": res_["built"]})
+                stt_.update(label="Done", state="complete")
+            except StepError as e:
+                stt_.update(label="Couldn't answer", state="error")
+                hist.append({"q": q_, "a": "⚠️ " + e.as_text(), "tools": [], "cost": None, "built": None})
+        st.rerun()

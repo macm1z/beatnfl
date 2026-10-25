@@ -960,3 +960,82 @@ def test_compare_sources_rebuilds_from_each_source(monkeypatch):
     t = grading.compare_sources(set_id)
     assert {"Combined (what you used)", "Sleeper only", "BeatNFL model only"} <= set(t.source), t.to_string()
     assert (t.lineups == 3).all() and (t.avg_actual == 90.0).all()
+
+
+# ---------------------------------------------------------------- ASK (Claude over the app's data; API faked)
+class _FakeResp:
+    def __init__(self, code, js):
+        self.status_code, self._js, self.text = code, js, json.dumps(js)
+
+    def json(self):
+        return self._js
+
+
+class _FakeSession:
+    """Plays back API responses in order and records each request body."""
+    def __init__(self, replies):
+        self.replies, self.bodies = list(replies), []
+
+    def post(self, url, headers=None, json=None, timeout=None):
+        import copy
+        assert headers["x-api-key"] == "k" and headers["anthropic-version"]
+        self.bodies.append(copy.deepcopy(json))
+        return self.replies.pop(0)
+
+
+def _ask_ctx():
+    from beatnfl import ask, pipeline
+    _, pool = pool_from_fixture()
+    run = pipeline.WeekRun(pool=pool, season=2026, week=7)
+    return ask, ask.Context(run=run, season=2026, week=7, forecasts=lambda: None, props=lambda: None,
+                            games=lambda: (pd.DataFrame([{"Game": "CHI @ ATL", "Spread": "ATL -3"}]), pd.DataFrame()))
+
+
+def test_ask_runs_tools_and_returns_answer_with_cost():
+    ask, ctx = _ask_ctx()
+    qb = ctx.run.pool[ctx.run.pool.pos == "QB"].sort_values("proj").name.iloc[-1]
+    think = {"type": "thinking", "thinking": "checking the pool", "signature": "sig"}
+    s = _FakeSession([
+        _FakeResp(200, {"stop_reason": "tool_use", "usage": {"input_tokens": 1000, "output_tokens": 100}, "content": [
+            think,
+            {"type": "tool_use", "id": "t1", "name": "pool_players", "input": {"position": "QB", "limit": 3}},
+            {"type": "tool_use", "id": "t2", "name": "build_lineups", "input": {"contest": "cash", "lock": [qb]}}]}),
+        _FakeResp(200, {"stop_reason": "end_turn", "usage": {"input_tokens": 3000, "output_tokens": 200},
+                        "content": [{"type": "text", "text": "Top QB is " + qb}]})])
+    res = ask.ask("k", "best QB?", ctx, history=[("hi", "hello")], session=s)
+    assert res["answer"] == "Top QB is " + qb
+    assert res["tools_used"] == ["pool_players", "build_lineups"]
+    assert res["cost"] == round(4000 / 1e6 * 2 + 300 / 1e6 * 10, 4)
+    b = res["built"]["result"].lineups
+    assert len(b) == 3 and all(ctx.run.pool.set_index("dk_id").loc[lu].name.eq(qb).any() for lu in b)
+    first, second = s.bodies
+    assert first["messages"][:2] == [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+    assert first["tool_choice"] == {"type": "auto"} and "temperature" not in first
+    assert second["messages"][-2]["content"][0] == think            # thinking block passed back unchanged
+    results = second["messages"][-1]["content"]
+    assert [r["tool_use_id"] for r in results] == ["t1", "t2"]
+    top = json.loads(results[0]["content"])
+    assert top["players"][0]["name"] == qb and "combined" in top["players"][0]
+
+
+def test_ask_errors_are_explained_and_thinking_fallback():
+    ask, ctx = _ask_ctx()
+    with pytest.raises(StepError) as e:
+        ask.ask("", "q", ctx)
+    assert "Settings" in e.value.fix
+    s = _FakeSession([_FakeResp(401, {"error": {"message": "invalid x-api-key"}})])
+    with pytest.raises(StepError) as e:
+        ask.ask("k", "q", ctx, session=s)
+    assert "refused the API key" in e.value.what
+    s = _FakeSession([_FakeResp(400, {"error": {"message": "thinking type between_tools not supported"}}),
+                      _FakeResp(200, {"stop_reason": "end_turn", "usage": {}, "content": [{"type": "text", "text": "ok"}]})])
+    assert ask.ask("k", "q", ctx, session=s)["answer"] == "ok"
+    assert "thinking" in s.bodies[0] and "thinking" not in s.bodies[1]
+    # tools never crash the loop; unknown players are reported
+    assert "Couldn't find" in ask.run_tool(ctx, "build_lineups", {"lock": ["Nobody Atall"]})
+    assert "error" in json.loads(ask.run_tool(ctx, "player", {"name": "zzzz qqqq"}))
+    assert json.loads(ask.run_tool(ctx, "games", {}))["lines"][0]["Spread"] == "ATL -3"
+    assert "available" in json.loads(ask.run_tool(ctx, "evidence", {}))
+    assert "unknown tool" in ask.run_tool(ctx, "nope", {})
+    spec = {t["name"] for t in ask.tool_specs()}
+    assert {"pool_players", "player", "build_lineups", "saved_set", "evidence"} <= spec

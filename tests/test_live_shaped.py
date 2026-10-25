@@ -169,7 +169,22 @@ def test_app_every_button(live, monkeypatch):
     _yahoo_mock(monkeypatch)
     s = Settings.load()
     s.odds_api_key, s.yahoo_client_id, s.yahoo_client_secret, s.fantasypros_api_key = "k", "cid", "sec", "fp-key"
+    s.anthropic_api_key = "ak"
     s.save()
+    from beatnfl import ask as _ask
+    _replies = []
+
+    def _fake_post(key, body, session=None):
+        if not _replies:
+            _replies.extend([
+                {"stop_reason": "tool_use", "usage": {"input_tokens": 500, "output_tokens": 50}, "content": [
+                    {"type": "tool_use", "id": "a", "name": "pool_players", "input": {"position": "RB", "max_salary": 6000}},
+                    {"type": "tool_use", "id": "b", "name": "build_lineups", "input": {"contest": "cash"}}]},
+                {"stop_reason": "end_turn", "usage": {"input_tokens": 900, "output_tokens": 80},
+                 "content": [{"type": "text", "text": "Here is your cash lineup."}]}])
+        assert key == "ak" and body["tools"]
+        return _replies.pop(0)
+    monkeypatch.setattr(_ask, "_post", _fake_post)
     monkeypatch.setattr(update, "check", lambda r, t="": {"sha": "x", "date": "2026-10-12", "message": "test", "update_available": False})
     # a finished props backtest on disk, so the Evidence section renders its tables
     from beatnfl import props_backtest as pb
@@ -215,6 +230,18 @@ def test_app_every_button(live, monkeypatch):
         got = len(at.session_state["lineups"]["result"].lineups)
         assert got == n if n else got > 3, (ct, got)
     assert Settings.load().contest == "se"
+    # Ask tab: a question runs the tools on this week's pool and offers the built lineups to This week
+    at.chat_input(key="ask_q").set_value("Build my cash lineup").run()
+    assert not at.exception, [e.value for e in at.exception]
+    h = at.session_state["ask_hist"][-1]
+    assert h["a"] == "Here is your cash lineup." and h["tools"] == ["pool_players", "build_lineups"] and h["cost"] > 0
+    assert len(h["built"]["result"].lineups) == 3
+    use = [b for b in at.button if b.label == "Use on This week"]
+    assert use
+    use[0].click().run()
+    assert not at.exception and at.session_state["lineups"]["result"].lineups == h["built"]["result"].lineups
+    [b for b in at.button if b.label == "Clear conversation"][0].click().run()
+    assert at.session_state["ask_hist"] == []
     # saved: one set saved, building+saving the same lineups again must not add a duplicate
     from beatnfl import storage
     assert len(storage.list_lineup_sets()) >= 1
@@ -225,7 +252,7 @@ def test_app_every_button(live, monkeypatch):
     assert any("paused by the credit limit" in m.value for m in at.markdown)
     s2 = Settings.load()
     assert s2.pos_weights, "Use these weights did not save per-position weights"
-    s2.odds_api_key = s2.yahoo_client_id = s2.yahoo_client_secret = s2.fantasypros_api_key = ""
+    s2.odds_api_key = s2.yahoo_client_id = s2.yahoo_client_secret = s2.fantasypros_api_key = s2.anthropic_api_key = ""
     s2.pos_weights, s2.stat_weights = {}, {}
     s2.save()
 
