@@ -1109,7 +1109,7 @@ def test_best_odds_among_my_books():
 def test_best_price_tie_prefers_a_book_with_a_slip():
     from beatnfl import research
     r = pd.DataFrame({"book": ["williamhill_us", "draftkings"], "price": [-110, -110], "link": [None, "https://dk/x"]})
-    assert research._best(r, "price", "link") == (-110.0, "draftkings", "https://dk/x")
+    assert research._best(r, "price", "link") == (-110.0, "draftkings = williamhill_us", "https://dk/x")
 
 
 
@@ -1140,3 +1140,22 @@ def test_parlay_pricing_and_slips():
     assert parlay.slips([bj], "draftkings").Odds.tolist() == [-110] and parlay.leg_probs(bj)[0] == 0.38
     assert parlay.same_game(legs) == ["CHI @ ATL"]
     assert parlay.american(2.5) == 150 and parlay.american(1.5) == -200
+
+
+
+def test_ties_listed_and_in_your_book_order():
+    from beatnfl import parlay, research
+    r = pd.DataFrame({"book": ["betmgm", "fanduel", "draftkings"], "price": [-110, -110, -115],
+                      "link": ["https://mgm", "https://fd", "https://dk"]})
+    p, bk, lk = research._best(r, "price", "link", ["fanduel", "betmgm", "draftkings"])
+    assert (p, bk, lk) == (-110.0, "fanduel = betmgm", "https://fd") and research.book_name(bk) == "FanDuel = BetMGM"
+    r2 = r.assign(link=[None, None, "https://dk"]).iloc[:2]
+    assert research._best(r2, "price", "link", ["fanduel", "betmgm"])[1] == "fanduel = betmgm"   # no slip anywhere → your order
+    q = lambda bk, pr: {"book": bk, "line": 1.5, "over": pr, "under": np.nan, "over_link": f"https://{bk}", "under_link": None}
+    legs = [{"kind": "game", "id": "a", "game": "A @ B", "label": "x", "side": "Bet", "model_p_over": .5, "market_p_over": .5,
+             "quotes": [q("draftkings", -110), q("fanduel", -110), q("betmgm", -120)]},
+            {"kind": "game", "id": "b", "game": "C @ D", "label": "y", "side": "Bet", "model_p_over": .5, "market_p_over": .5,
+             "quotes": [q("draftkings", 100), q("fanduel", 100)]}]
+    pr = parlay.price(legs, ["fanduel", "draftkings", "betmgm"])
+    assert pr.book.tolist() == ["fanduel", "draftkings", "betmgm"]
+    assert pr.Best.tolist() == ["★ tied best", "★ tied best", ""] and pr["Not offered"].iloc[2] == "y"

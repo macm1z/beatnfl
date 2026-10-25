@@ -1698,6 +1698,8 @@ with tab_parlay:
         else:
             st.markdown(f"**{len(legs)}-leg parlay at your sportsbooks** (best first)")
             show(pr.drop(columns="book"), {
+                "Best": st.column_config.Column("Best", help="Highest payout. Tied books pay exactly the same — use whichever you prefer."),
+                "Not offered": st.column_config.Column("Not offered", help="Legs this book doesn't offer at this line — the parlay can't be placed there as is."),
                 "Parlay odds": st.column_config.NumberColumn("Parlay odds", format="%+d", help="All legs' odds multiplied (independent legs)."),
                 "Pays on $10": st.column_config.NumberColumn("Pays on $10", format="$%.2f", help="Total return on a $10 bet, stake included."),
                 "Market chance %": st.column_config.NumberColumn("Market chance %", format="%.1f%%",
@@ -1709,7 +1711,8 @@ with tab_parlay:
                                                                   help="Expected return at BeatNFL's chances. The model has no proven edge on props or games (Evidence).")})
             full = pr[pr["Parlay odds"].notna()]
             choices = list(full.book) or list(pr.book)
-            bk = st.selectbox("Place at", choices, format_func=lambda k: _pl.book_name(k), key="parlay_book")
+            bk = st.selectbox("Place at", choices, format_func=lambda k: _pl.book_name(k), key="parlay_book",
+                              help="Books are listed best payout first; tied books are in your My sportsbooks order.")
             sl = _pl.slips(legs, bk)
             show(sl, {"Odds": st.column_config.NumberColumn("Odds", format="%+d"),
                       "Slip": st.column_config.LinkColumn("Slip", display_text="Add ↗",

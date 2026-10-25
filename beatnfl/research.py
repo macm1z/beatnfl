@@ -162,7 +162,7 @@ def game_best(gp: pd.DataFrame, raw: pd.DataFrame | None, books: list | None = N
                 exact = x[x.line == ln]
                 note = f" (at {ln:+g})" if bt == "Spread" else f" (at {ln:g})"
             x = exact
-        p, bk, lk = _best(x, "price", "link")
+        p, bk, lk = _best(x, "price", "link", books)
         out.loc[i, ["Best odds", "Best book", "Best slip"]] = [p, (book_name(bk) + note) if bk else "", odds.bet_link(lk)]
     return out
 
@@ -337,17 +337,25 @@ DEFAULT_BOOKS = ["draftkings", "fanduel", "betmgm", "williamhill_us", "fanatics"
                  "hardrockbet", "ballybet", "betparx"]
 
 
-def _best(rows: pd.DataFrame, price_col: str, link_col: str):
-    """(price, book, link) of the best price in rows — highest payout. (nan, '', None) when none."""
+def _best(rows: pd.DataFrame, price_col: str, link_col: str, order: list | None = None):
+    """(price, book, link) of the best price in rows — highest payout. Ties: a book that gives a betslip link,
+    then the one listed first in `order` (your My sportsbooks order). (nan, '', None) when none.
+    `book` names every book tied at that price, joined with ' = ' (the first is the one the slip opens)."""
     r = (rows[rows[price_col].notna()] if price_col in rows else rows.iloc[0:0]).reset_index(drop=True)
     if r.empty:
         return np.nan, "", None
     has = r[link_col].map(lambda v: isinstance(v, str)) if link_col in r else pd.Series(False, index=r.index)
-    i = r.assign(_d=r[price_col].map(_dec), _l=has).sort_values(["_d", "_l"], ascending=False).index[0]  # ties → a book with a slip
-    return float(r.at[i, price_col]), r.at[i, "book"], (r.at[i, link_col] if link_col in r else None)
+    rank = {b: i for i, b in enumerate(order or [])}
+    r = r.assign(_d=r[price_col].map(_dec).round(6), _l=has, _o=r.book.map(lambda b: rank.get(b, len(rank))))
+    top = r[r._d == r._d.max()].sort_values(["_l", "_o"], ascending=[False, True])   # a slip first, then your order
+    first = top.iloc[0]
+    tied = [first.book] + [b for b in dict.fromkeys(top.sort_values("_o").book) if b != first.book]
+    return float(first[price_col]), " = ".join(tied), (first[link_col] if link_col in r else None)
 
 
 def book_name(key: str) -> str:
+    if isinstance(key, str) and " = " in key:                 # several books tied at the best price
+        return " = ".join(book_name(k) for k in key.split(" = "))
     return BOOK_NAMES.get(key, str(key).replace("_", " ").title())
 
 
@@ -389,8 +397,8 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
         for (gm_, pl_, st_), x in mine.groupby(["game", "player", "stat"]):
             ln = x.line.mode().iloc[0] if x.line.notna().any() else np.nan
             x = x[x.line == ln] if pd.notna(ln) else x
-            po, bo, lo = _best(x, "price", "link")
-            pu, bu, lu = _best(x, "under_price", "under_link")
+            po, bo, lo = _best(x, "price", "link", books)
+            pu, bu, lu = _best(x, "under_price", "under_link", books)
             best.append({"game": gm_, "player": pl_, "stat": st_, "best_line": ln, "best_over": po, "over_book": bo,
                          "link": lo, "best_under": pu, "under_book": bu, "under_link": lu})
         slips = pd.DataFrame(best, columns=["game", "player", "stat", "best_line", "best_over", "over_book", "link",
@@ -545,7 +553,9 @@ def midweek_picks(board: pd.DataFrame, fp: pd.DataFrame | None = None, min_diff:
         ok = prices.notna()
         if not ok.any():
             continue
-        best_i = prices[ok].map(_dec).idxmax()
+        rank = {bk_: i_ for i_, bk_ in enumerate(books or [])}
+        cand = pd.DataFrame({"d": prices[ok].map(_dec).round(6), "o": g.book[ok].map(lambda x: rank.get(x, len(rank)))})
+        best_i = cand.sort_values(["d", "o"], ascending=[False, True]).index[0]     # ties → your first-listed book
         price = float(prices[best_i])
         lk_col = "link" if side in ("Over", "Yes") else "under_link"
         slip = g[lk_col][best_i] if lk_col in g else None

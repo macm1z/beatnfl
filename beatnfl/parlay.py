@@ -108,23 +108,32 @@ def price(legs: list[dict], books: list | None = None) -> pd.DataFrame:
     if books:
         all_books = [b for b in all_books if b in books]
     rows = []
+    rank = {b: i for i, b in enumerate(books or [])}
     for bk in all_books:
-        decs = []
+        decs, missing = [], []
         for lg in legs:
             q = next((q for q in lg["quotes"] if q["book"] == bk), None)
             p = q and q["over" if _taking_over(lg) else "under"]
             decs.append(_dec(p) if p is not None and pd.notna(p) else np.nan)
+            if np.isnan(decs[-1]):
+                missing.append(leg_label(lg))
         have = int(np.sum(~np.isnan(decs)))
         dec = float(np.prod(decs)) if have == len(legs) else np.nan
-        rows.append({"book": bk, "Sportsbook": book_name(bk), "Legs offered": f"{have} of {len(legs)}",
+        rows.append({"book": bk, "Best": "", "Sportsbook": book_name(bk), "Legs offered": f"{have} of {len(legs)}",
+                     "Not offered": "; ".join(missing),
                      "Parlay odds": american(dec), "Pays on $10": round(10 * dec, 2) if dec == dec else np.nan,
                      "Market chance %": round(100 * pk, 1) if pk == pk else np.nan,
                      "Model chance %": round(100 * pm, 1) if pm == pm else np.nan,
                      "Value vs market %": round(100 * (pk * dec - 1), 1) if dec == dec and pk == pk else np.nan,
                      "Value vs model %": round(100 * (pm * dec - 1), 1) if dec == dec and pm == pm else np.nan,
-                     "_dec": dec})
+                     "_dec": round(dec, 6) if dec == dec else np.nan, "_o": rank.get(bk, len(rank))})
     out = pd.DataFrame(rows)
-    return out.sort_values("_dec", ascending=False, na_position="last").drop(columns="_dec").reset_index(drop=True)
+    out = out.sort_values(["_dec", "_o"], ascending=[False, True], na_position="last").reset_index(drop=True)
+    if out._dec.notna().any():
+        top = out._dec.max()
+        n_top = int((out._dec == top).sum())
+        out.loc[out._dec == top, "Best"] = "★ best" if n_top == 1 else "★ tied best"
+    return out.drop(columns=["_dec", "_o"])
 
 
 def slips(legs: list[dict], book: str) -> pd.DataFrame:
