@@ -156,6 +156,11 @@ def _summ(g: pd.DataFrame) -> dict:
             if pd.to_numeric(g.bp_prob, errors="coerce").notna().any() else np.nan}
 
 
+def _by(g: pd.DataFrame, col: str, key) -> pd.DataFrame:
+    rows = [{col: k, **_summ(x)} for k, x in g.groupby(key)]
+    return pd.DataFrame(rows)
+
+
 def summarize(graded: pd.DataFrame) -> dict:
     """Tables by star rating, by market and by model, plus a plain verdict."""
     if graded is None or graded.empty:
@@ -164,9 +169,9 @@ def summarize(graded: pd.DataFrame) -> dict:
     rated = graded[graded.stars.notna()]
     out = {"n": len(graded), "n_rated": len(rated)}
     out["by_stars"] = pd.DataFrame([{"stars": int(s), **_summ(g)} for s, g in rated.groupby("stars")])
-    out["by_market"] = pd.DataFrame([{"market": m, **_summ(g)} for m, g in graded.groupby("market")]).sort_values(
-        "picks", ascending=False) if "market" in graded else pd.DataFrame()
-    out["by_model"] = pd.DataFrame([{"model": m, **_summ(g)} for m, g in graded.groupby(graded.bp_signal.fillna("unknown"))])
+    bm = _by(graded, "market", graded.market.fillna("?")) if "market" in graded else pd.DataFrame()
+    out["by_market"] = bm.sort_values("picks", ascending=False) if not bm.empty else bm
+    out["by_model"] = _by(graded, "model", graded.bp_signal.fillna("unknown")) if "bp_signal" in graded else pd.DataFrame()
     top = rated[rated.stars >= 4]
     if rated.empty:
         out["verdict"] = ("BettingPros returned graded props but no star ratings for these weeks — their archive "
@@ -232,12 +237,12 @@ def info_test(df: pd.DataFrame) -> dict:
            "brier_market": round(float(((d.p_over - d.over) ** 2).mean()), 4),
            "brier_bp": round(float(((d.model_p_over - d.over) ** 2).mean()), 4),
            "info": _mi(d)}
-    out["by_stat"] = pd.DataFrame([{"market": m, "props": len(g),
+    bs = pd.DataFrame([{"market": m, "props": len(g),
                                     "brier_market": round(float(((g.p_over - g.over) ** 2).mean()), 4),
                                     "brier_bp": round(float(((g.model_p_over - g.over) ** 2).mean()), 4),
                                     **{f"bp_{k}": v for k, v in _mi(g).items() if k != "n"}}
-                                   for m, g in d.groupby(d.market.fillna("?")) if len(g) >= 50]).sort_values(
-        "props", ascending=False) if len(d) >= 50 else pd.DataFrame()
+                                   for m, g in d.groupby(d.market.fillna("?")) if len(g) >= 50])
+    out["by_stat"] = bs.sort_values("props", ascending=False) if not bs.empty else bs
     i = out["info"]
     if not i:
         out["verdict"] = f"{len(d)} graded props — need at least 200 to test (keep collecting)."

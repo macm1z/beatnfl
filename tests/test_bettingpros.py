@@ -211,3 +211,11 @@ def test_information_test_beyond_the_line():
     assert "need at least 200" in small["verdict"]
     bp_record.save_result("t", {"verdict": "x", "by_stars": pd.DataFrame(), "info": good})
     assert not bp_record.load_result("t")["info"]["by_stat"].empty
+
+
+def test_information_test_small_groups_do_not_crash():
+    d = pd.DataFrame({"scored": True, "push": False, "actual": [60, 40] * 30, "line": 50.5, "rec_line": 50.5,
+                      "bp_side": "over", "bp_prob": 0.6, "over_cons_odds": -110, "under_cons_odds": -110,
+                      "market": [f"m{i}" for i in range(60)]})
+    r = bp_record.info_test(d)
+    assert r["n"] == 60 and r["by_stat"].empty and "need at least 200" in r["verdict"]
