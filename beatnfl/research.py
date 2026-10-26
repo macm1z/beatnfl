@@ -347,7 +347,10 @@ BOOK_NAMES = {"draftkings": "DraftKings", "fanduel": "FanDuel", "betmgm": "BetMG
 STAT_NAMES = {"pass_yds": "Pass yds", "pass_att": "Pass att", "pass_cmp": "Completions", "pass_td": "Pass TDs",
               "rush_yds": "Rush yds", "rush_att": "Rush att", "rec": "Receptions", "rec_yds": "Rec yds", "any_td": "Anytime TD"}
 CONSENSUS = "All books (consensus)"
-GAME_LEAN = 4.0      # Games: a bet slip is offered only where the model's chance is this many points above the market
+# Games: the game model has not beaten closing lines (2023–25 backtest, and weeks 6–7 of 2026: its margin and
+# total misses were larger than the market's, and its 3+ point disagreements went 1 of 8 against the spread),
+# so no side is recommended and no bet slip is offered. Set a number (e.g. 4.0) to show slips again.
+GAME_LEAN = None
 # Books licensed in the US states BeatNFL users bet in (offshore books left out). Settings → "My sportsbooks".
 DEFAULT_BOOKS = ["draftkings", "fanduel", "betmgm", "williamhill_us", "fanatics", "espnbet", "betrivers",
                  "hardrockbet", "ballybet", "betparx"]
@@ -694,7 +697,12 @@ def grade_picks(offline=False) -> tuple[pd.DataFrame, dict]:
     pk["units"] = [(_dec(p) - 1) if rs == "won" else (-1.0 if rs == "lost" else 0.0) for p, rs in zip(pk.price, pk.result)]
     done = pk[pk.result != ""]
     cl = pk[pk.clv.notna()]
-    summary = {"n": len(pk), "graded": len(done), "won": int((done.result == "won").sum()),
+    # one per prop: the same player/stat at several lines (alternate lines) is one decision, not several
+    one = done.sort_values("created_utc").drop_duplicates(["season", "week", "player", "stat"]) if len(done) else done
+    summary = {"n": len(pk), "graded": len(done),
+               "props": len(one), "props_won": int((one.result == "won").sum()) if len(one) else 0,
+               "props_roi": round(float(one.units.mean() * 100), 1) if len(one) else None,
+               "props_roi_se": round(float(one.units.std(ddof=1) / np.sqrt(len(one)) * 100), 1) if len(one) > 1 else None, "won": int((done.result == "won").sum()),
                "lost": int((done.result == "lost").sum()), "push": int((done.result == "push").sum()),
                "units": round(float(done.units.sum()), 2), "roi": round(float(done.units.mean() * 100), 1) if len(done) else None,
                "clv_n": len(cl), "clv_avg": round(float(cl.clv.mean()), 2) if len(cl) else None,

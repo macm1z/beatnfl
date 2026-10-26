@@ -751,7 +751,10 @@ with tab_games:
             from beatnfl.sources import odds as _odds_src
             gp = gp.join(research.game_best(gp, raw_all, S.my_books))
             gp["Bet slip"] = research.game_slips(gp, raw) if book_pick else gp["Best slip"]
-            gp.loc[~(gp.Difference >= research.GAME_LEAN), "Bet slip"] = None   # a slip only where the model leans
+            if research.GAME_LEAN is None:                  # the game model hasn't beaten the market — no recommendations
+                gp = gp.drop(columns="Bet slip")
+            else:
+                gp.loc[~(gp.Difference >= research.GAME_LEAN), "Bet slip"] = None
             gp = gp.drop(columns="Best slip")
             f1, f2, f3 = st.columns(3)
             pg = f1.selectbox("Game", ["All games"] + list(gt.Game), key="games_game")
@@ -1119,6 +1122,11 @@ with tab_picks:
             m4.metric("Avg CLV", f"{sm['clv_avg']:+.1f} pts" if sm.get("clv_avg") is not None else "—",
                       help=(f"Beat the close {sm['beat_close']:.0f}% of the time ({sm['clv_n']} picks with a closing price)"
                             if sm.get("clv_n") else "No closing prices recorded yet"))
+            if sm.get("props"):
+                st.caption(f"**One per prop** (alternate lines of the same player/stat counted once): {sm['props_won']}-"
+                           f"{sm['props'] - sm['props_won']}, ROI {sm['props_roi']:+.1f}% ± {sm['props_roi_se'] or 0:.1f}. "
+                           "Same-game Unders win and lose together, so a couple of weeks is still mostly luck — the 2025 "
+                           "full-season test of this rule was +2.1% ± 4.6.")
             v = pd.DataFrame({
                 "Week": tbl.week, "Game": tbl.game, "Player": tbl.player,
                 "Prop": [("Anytime TD" if s_ == "any_td" else f"{_rs.STAT_NAMES.get(s_, s_)} {l_:g}") for s_, l_ in zip(tbl.stat, tbl.line)],
@@ -1320,6 +1328,58 @@ with tab_yahoo:
 
 # ------------------------------------------------------------------ EVIDENCE
 with tab_evidence:
+    st.subheader("Weekly review")
+    st.caption("How last week's lineups, prop picks, game numbers and BettingPros ratings landed — one place, graded "
+               "on the box scores. One week is mostly luck: the model is changed only when the multi-season tests "
+               "below agree.")
+    from beatnfl import review as _rv
+    from beatnfl.sources import nflverse as _nvr
+    try:
+        _cs, _cw = _nvr.upcoming_week(_nvr.schedules(offline=offline))
+    except StepError:
+        _cs, _cw = 2026, 2
+    r1, r2, r3 = st.columns([1, 1, 2], vertical_alignment="bottom")
+    rv_season = r1.number_input("Season", 2020, 2100, int(_cs), key="rv_season")
+    rv_week = r2.number_input("Week", 1, 22, max(1, int(_cw) - 1), key="rv_week",
+                              help="Defaults to last week. Box scores post the morning after the games.")
+    if r3.button("📋 Review this week", type="primary"):
+        with st.spinner("Grading everything for that week…"):
+            ss["review"] = _rv.week_review(int(rv_season), int(rv_week), offline=offline)
+    rv = ss.get("review")
+    if rv:
+        st.caption(f"{rv['season']} week {rv['week']} · {rv.get('games_final', '')}")
+        d_ = rv.get("dfs", {})
+        st.markdown("**DFS lineups**")
+        if isinstance(d_.get("sets"), pd.DataFrame) and not d_["sets"].empty:
+            show(d_["sets"])
+            if isinstance(d_.get("sources"), pd.DataFrame) and not d_["sources"].empty:
+                st.caption("The same lineups rebuilt from each projection source alone, scored on the real results:")
+                show(d_["sources"].rename(columns={"source": "Projections used", "avg_projected": "Avg projected",
+                                                   "avg_actual": "Avg actual", "players_projected": "Players covered"}))
+        else:
+            st.caption(d_.get("note") or d_.get("error", ""))
+        p_ = rv.get("picks", {})
+        st.markdown("**Prop picks**")
+        if p_.get("summary"):
+            show(pd.DataFrame([{"count": k, **v} for k, v in p_["summary"].items()]))
+            if isinstance(p_.get("by_stat"), pd.DataFrame) and not p_["by_stat"].empty:
+                show(p_["by_stat"])
+        else:
+            st.caption(p_.get("error") or "No graded picks for this week.")
+        g_ = rv.get("games", {})
+        st.markdown("**Game model vs the closing line** (lower miss is better)")
+        if g_.get("n"):
+            show(pd.DataFrame([{"measure": k, "value": str(v)} for k, v in g_.items() if k != "n"]))
+        else:
+            st.caption(g_.get("error") or "No finished games.")
+        b_ = rv.get("bettingpros", {})
+        st.markdown("**BettingPros ratings** (your pre-game snapshots)")
+        st.caption(str(b_.get("verdict", b_.get("error", ""))))
+        if isinstance(b_.get("by_stars"), pd.DataFrame) and not b_["by_stars"].empty:
+            show(b_["by_stars"])
+        with st.expander("Copy as text"):
+            st.code(_rv.as_text(rv), language=None)
+    st.divider()
     from beatnfl.config import HOME as _H
     files = sorted(glob.glob(str(_H / "evidence" / "backtest_*.json")))
     bundled = APP_ROOT / "evidence" / "backtest_baseline.json"

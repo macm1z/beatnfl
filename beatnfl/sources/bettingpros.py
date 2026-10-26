@@ -112,6 +112,28 @@ def get(key: str, path: str, params: dict, max_age_h: float = 1.0, offline=False
     return data
 
 
+# NFL player-prop market ids as BettingPros' board uses them (confirmed from live data, Oct 2026). Used when
+# /markets doesn't label an id, and to repair snapshots saved before this map existed.
+KNOWN = {100: ("pass_cmp", "Completions"), 101: ("pass_int", "Interceptions"), 102: ("pass_td", "Pass TDs"),
+         103: ("pass_yds", "Pass Yds"), 104: ("rec", "Receptions"), 105: ("rec_yds", "Rec Yds"),
+         106: ("rush_att", "Rush Att"), 107: ("rush_yds", "Rush Yds"), 333: ("pass_att", "Pass Att"),
+         406: ("rush_rec_yds", "Rush+Rec Yds")}
+
+
+def fill_known(df: pd.DataFrame) -> pd.DataFrame:
+    """Fill stat/market for rows whose market id BettingPros didn't label."""
+    if df is None or df.empty or "market_id" not in df:
+        return df
+    d = df.copy()
+    mid = pd.to_numeric(d.market_id, errors="coerce")
+    for c, i in (("stat", 0), ("market", 1)):
+        if c not in d:
+            d[c] = None
+        d[c] = d[c].where(d[c].notna() & (d[c].astype(str) != ""), mid.map(lambda m: KNOWN.get(int(m), (None, None))[i]
+                                                                             if m == m else None))
+    return d
+
+
 def markets(key: str, offline=False) -> dict[int, dict]:
     """NFL markets: id → {slug, label, stat}. One request, cached for a week."""
     data = get(key, "/markets", {"sport": "NFL"}, max_age_h=24 * 7, offline=offline)
@@ -124,6 +146,9 @@ def markets(key: str, offline=False) -> dict[int, dict]:
         if hits:
             stat = max(hits)[1]
         out[int(m["id"])] = {"slug": slug, "label": (m.get("meta") or {}).get("short_label") or slug, "stat": stat}
+    for i, (st_, lab) in KNOWN.items():
+        if i not in out or not out[i].get("stat"):
+            out[i] = {"slug": st_, "label": lab, "stat": st_}
     return out
 
 

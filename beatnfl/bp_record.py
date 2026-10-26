@@ -111,6 +111,10 @@ def _ids(d: pd.DataFrame) -> pd.DataFrame:
     return d
 
 
+def load_archive_raw() -> pd.DataFrame:
+    return load_archive()
+
+
 def load_archive() -> pd.DataFrame:
     fs = sorted(DIR.glob("archive_*.csv"))
     frames = []
@@ -119,7 +123,7 @@ def load_archive() -> pd.DataFrame:
             frames.append(pd.read_csv(f))
         except (pd.errors.EmptyDataError, ValueError):
             continue
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    return bp.fill_known(pd.concat(frames, ignore_index=True)) if frames else pd.DataFrame()
 
 
 def grade(df: pd.DataFrame) -> pd.DataFrame:
@@ -256,6 +260,35 @@ def info_test(df: pd.DataFrame) -> dict:
     return out
 
 
+STAT_COLS = {"pass_cmp": "completions", "pass_int": "passing_interceptions", "pass_td": "passing_tds",
+             "pass_yds": "passing_yards", "pass_att": "attempts", "rec": "receptions", "rec_yds": "receiving_yards",
+             "rush_att": "carries", "rush_yds": "rushing_yards"}
+
+
+def actuals_from_stats(df: pd.DataFrame, offline=False) -> pd.DataFrame:
+    """Grade props without spending BettingPros requests: each row's actual stat from nflverse box scores
+    (players with no stat line that week are left ungraded — books void those bets)."""
+    from .names import norm_name
+    from .sources import nflverse as nv
+    if df is None or df.empty:
+        return pd.DataFrame()
+    d = bp.fill_known(df)
+    seasons = sorted({int(x) for x in d.season.dropna()})
+    w = nv.weekly_stats(seasons, offline=offline).copy()
+    w["nn"] = w.player_display_name.map(norm_name)
+    w["rush_rec_yds"] = w.rushing_yards.fillna(0) + w.receiving_yards.fillna(0)
+    idx = w.drop_duplicates(["season", "week", "nn"]).set_index(["season", "week", "nn"])
+    nn = d.nn if "nn" in d else d.player.map(norm_name)
+    acts = []
+    for (season, week, n, stat) in zip(d.season, d.week, nn, d.stat):
+        col = "rush_rec_yds" if stat == "rush_rec_yds" else STAT_COLS.get(stat)
+        key = (int(season), int(week), n)
+        acts.append(float(idx.at[key, col]) if col and col in idx and key in idx.index and pd.notna(idx.at[key, col]) else np.nan)
+    d["actual"] = acts
+    d["scored"], d["push"] = d.actual.notna(), False
+    return d[d.actual.notna()]
+
+
 def snapshot_record(key: str, offline=False, progress=lambda m: None) -> pd.DataFrame:
     """Grade the app's own pre-game snapshots against finished results (uses the archive when present,
     otherwise downloads the finished week). Keeps each pick's LAST snapshot before kickoff."""
@@ -264,6 +297,13 @@ def snapshot_record(key: str, offline=False, progress=lambda m: None) -> pd.Data
         return pd.DataFrame()
     S = _ids(pd.concat([pd.read_csv(f) for f in fs], ignore_index=True))
     S = S.sort_values("fetched_utc").drop_duplicates(["bp_player_id", "market_id", "event_id"], keep="last")
+    # finished games: actual stats from nflverse box scores (free); BettingPros' archive only as a fallback
+    try:
+        G = actuals_from_stats(S, offline=offline)
+        if not G.empty:
+            return grade(G)
+    except StepError:
+        pass
     res = []
     for (s, w), g in S.groupby(["season", "week"]):
         f = week_file(int(s), int(w))

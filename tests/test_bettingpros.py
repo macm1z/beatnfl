@@ -164,7 +164,8 @@ def test_no_ratings_in_archive_is_reported(fake):
     assert "no star ratings" in s["verdict"]
 
 
-def test_snapshots_graded_against_results(fake):
+def test_snapshots_graded_against_results(fake, monkeypatch):
+    monkeypatch.setattr(bp_record, "actuals_from_stats", lambda df, offline=False: pd.DataFrame())   # → BettingPros archive
     up, _ = bp.props("good", 2026, 4, completed=False)
     assert not up.scored.any()
     assert bp_record.save_snapshot(up) == 60
@@ -219,3 +220,22 @@ def test_information_test_small_groups_do_not_crash():
                       "market": [f"m{i}" for i in range(60)]})
     r = bp_record.info_test(d)
     assert r["n"] == 60 and r["by_stat"].empty and "need at least 200" in r["verdict"]
+
+
+
+def test_known_market_ids_and_box_score_grading(monkeypatch):
+    from beatnfl.sources import nflverse as nv
+    snap = pd.DataFrame({"season": 2026, "week": 7, "player": ["Jahmyr Gibbs", "Jared Goff", "Nobody Here"],
+                         "market_id": [406, 103, 105], "stat": [None, None, None], "market": [None, None, None],
+                         "line": [140.5, 266.5, 20.5], "rec_line": [139.5, 266.5, 20.5], "bp_side": ["under", "over", "over"],
+                         "rec_odds": [103, -110, -110], "rec_cons_odds": [-110, -110, -110], "bp_stars": [5, 3, 2],
+                         "bp_prob": [.76, .55, .5], "bp_signal": "projection"})
+    fixed = bp.fill_known(snap)
+    assert fixed.stat.tolist() == ["rush_rec_yds", "pass_yds", "rec_yds"]
+    box = pd.DataFrame({"season": [2026, 2026], "week": [7, 7], "player_display_name": ["Jahmyr Gibbs", "Jared Goff"],
+                        "rushing_yards": [80.0, 5.0], "receiving_yards": [41.0, 0.0], "passing_yards": [0.0, 250.0]})
+    monkeypatch.setattr(nv, "weekly_stats", lambda seasons, offline=False: box)
+    g = bp_record.actuals_from_stats(snap)
+    assert g.actual.tolist() == [121.0, 250.0]                       # the player with no stat line is left ungraded
+    graded = bp_record.grade(g)
+    assert graded.won.tolist() == [1, 0]

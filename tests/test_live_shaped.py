@@ -241,6 +241,9 @@ def test_app_every_button(live, monkeypatch):
         sb = at.selectbox(key=key)
         sb.set_value(sb.options[min(pick, len(sb.options) - 1)]).run()
         assert not at.exception, f"{key}: {[e.value for e in at.exception]}"
+    # the fixture week may already be under way (tests run on game days too) — show started games for these checks
+    at.toggle(key="games_started").set_value(True).run()
+    at.toggle(key="props_started").set_value(True).run()
     for key in ("props_show", "games_show", "games_type", "games_game", "games_book", "games_book_game"):
         sb = at.selectbox(key=key)
         sb.set_value(sb.options[1]).run()
@@ -270,6 +273,10 @@ def test_app_every_button(live, monkeypatch):
     assert any(w for w in at.warning if "Same-game" in w.value)          # both legs are from the one props game
     [b for b in at.button if b.label == "Clear parlay"][0].click().run()
     assert not at.exception and at.session_state["parlay"] == []
+    # weekly review renders (whatever has been graded for that week)
+    [b for b in at.button if b.label == "📋 Review this week"][0].click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.session_state["review"]["week"] >= 1
     # contest types: each builds; single entry gives best + 2 backups, multi-entry the full set
     for ct, n in (("cash", 3), ("multi", None), ("se", 3)):
         at.radio(key="contest").set_value(ct).run()
