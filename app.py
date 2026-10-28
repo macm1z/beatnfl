@@ -265,9 +265,10 @@ with st.sidebar:
             if _where:
                 st.error(f"**Not running:** the BeatNFL folder is in **{_where}**, and macOS blocks background jobs from "
                          f"opening {_where} — so the Wednesday picks, game-day checks, closing prices and BettingPros "
-                         f"record haven't been running. Fix (2 minutes): quit BeatNFL, drag the BeatNFL folder from {_where} "
-                         "to your home folder (Finder → Go → Home), double-click **Install BeatNFL.command** in its new "
-                         "place, start BeatNFL, then switch this off and on.")
+                         f"record haven't been running. Fix (2 minutes): quit BeatNFL, move the BeatNFL folder from {_where} "
+                         "to your home folder (Finder → Go → Home) **and name it “BeatNFL App”** — your home folder already "
+                         "has a folder called BeatNFL that holds your data; never replace it. Then double-click **Install "
+                         "BeatNFL.command** inside “BeatNFL App”, start BeatNFL, and switch this off and on.")
             _lr = _sched.last_run()
             if _lr:
                 st.caption(f"Last background run: {_lr['when']:%a %b %-d %-I:%M %p}" + (" — **failed**" if _lr["error"] else ""))

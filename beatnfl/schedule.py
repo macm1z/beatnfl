@@ -136,8 +136,8 @@ def install(on: bool = True) -> str:
     where = blocked_location()
     if on and where:
         return (f"Can't turn on yet: the BeatNFL folder is in {where}, which macOS doesn't let background jobs open. "
-                f"Move the BeatNFL folder out of {where} into your home folder, run Install BeatNFL.command once, "
-                "then turn this on.")
+                f"Move the BeatNFL folder out of {where} into your home folder, named “BeatNFL App” (the existing BeatNFL folder "
+                "there holds your data — don't replace it), run Install BeatNFL.command once, then turn this on.")
     AGENTS.mkdir(parents=True, exist_ok=True)
     for label in JOBS:
         p = AGENTS / f"{label}.plist"
