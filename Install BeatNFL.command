@@ -12,7 +12,13 @@ if [ -z "$UV" ]; then
   curl -LsSf https://astral.sh/uv/0.11.32/install.sh | sh
   UV="$HOME/.local/bin/uv"
 fi
+# A folder that was moved (e.g. out of Downloads) gets a fresh environment — scripts inside it hold the old path.
+if [ -d .venv ] && [ "$(cat .venv/.beatnfl_path 2>/dev/null)" != "$PWD" ]; then
+  echo "Folder moved — rebuilding the Python environment for the new location…"
+  rm -rf .venv
+fi
 "$UV" venv --python 3.13 .venv --allow-existing
+echo "$PWD" > .venv/.beatnfl_path
 # Every package (47, including sub-dependencies) is locked to an exact version AND sha256 checksum;
 # installation stops if any downloaded file does not match.
 "$UV" pip install --python .venv --require-hashes -r requirements.txt

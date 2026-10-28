@@ -261,6 +261,16 @@ with st.sidebar:
             st.caption("Runs in the background while your Mac is awake and notifies you: Wednesday 7 PM picks list · "
                        "game-day lineup check after inactives post · closing prices before kickoffs · BettingPros "
                        "track record each evening (with a BettingPros key).")
+            _where = _sched.blocked_location()
+            if _where:
+                st.error(f"**Not running:** the BeatNFL folder is in **{_where}**, and macOS blocks background jobs from "
+                         f"opening {_where} — so the Wednesday picks, game-day checks, closing prices and BettingPros "
+                         f"record haven't been running. Fix (2 minutes): quit BeatNFL, drag the BeatNFL folder from {_where} "
+                         "to your home folder (Finder → Go → Home), double-click **Install BeatNFL.command** in its new "
+                         "place, start BeatNFL, then switch this off and on.")
+            _lr = _sched.last_run()
+            if _lr:
+                st.caption(f"Last background run: {_lr['when']:%a %b %-d %-I:%M %p}" + (" — **failed**" if _lr["error"] else ""))
             _on = st.toggle("On", value=_sched.installed(), key="auto_checks")
             if _on != _sched.installed():
                 st.info(_sched.install(_on))

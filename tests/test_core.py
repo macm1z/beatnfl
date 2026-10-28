@@ -1282,3 +1282,16 @@ def test_yahoo_signin_catcher_finishes_by_itself(monkeypatch, tmp_path):
     r = _rq.get(f"https://127.0.0.1:{port}/", verify=False, timeout=10)
     assert "without a sign-in code" in r.text and yahoo.CATCH["status"].startswith("error")
     yahoo.stop_catcher()
+
+
+def test_schedule_refuses_protected_folders(monkeypatch, tmp_path):
+    from beatnfl import schedule
+    monkeypatch.setattr(schedule.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(schedule, "APP_DIR", tmp_path / "Downloads" / "BeatNFL")
+    (tmp_path / "Downloads" / "BeatNFL").mkdir(parents=True)
+    assert schedule.blocked_location() == "Downloads"
+    monkeypatch.setattr(schedule, "supported", lambda: True)
+    assert "Move the BeatNFL folder out of Downloads" in schedule.install(True)
+    monkeypatch.setattr(schedule, "APP_DIR", tmp_path / "BeatNFL-app")
+    (tmp_path / "BeatNFL-app").mkdir()
+    assert schedule.blocked_location() is None

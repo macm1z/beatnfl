@@ -74,6 +74,32 @@ def plist(label: str, tz: str | None = None) -> dict:
             "RunAtLoad": False}
 
 
+PROTECTED = ("Downloads", "Desktop", "Documents")
+
+
+def blocked_location() -> str | None:
+    """macOS privacy protection stops background jobs from reading Downloads, Desktop and Documents, so
+    the automatic checks can't run while the app folder is in one of them. Returns that folder's name."""
+    try:
+        rel = APP_DIR.resolve().relative_to(Path.home())
+    except ValueError:
+        return None
+    return rel.parts[0] if rel.parts and rel.parts[0] in PROTECTED else None
+
+
+def last_run() -> dict:
+    """What the background checks last wrote: when, and whether it was an error."""
+    log = HOME / "schedule.log"
+    if not log.exists():
+        return {}
+    import datetime as _dt
+    txt = log.read_text(errors="replace").splitlines()[-40:]
+    when = _dt.datetime.fromtimestamp(log.stat().st_mtime)
+    err = next((l for l in reversed(txt) if "Error" in l or "error" in l), "")
+    return {"when": when, "error": err if txt and ("Error" in txt[-1] or "PermissionError" in "\n".join(txt[-5:])) else "",
+            "tail": "\n".join(txt[-6:])}
+
+
 def installed() -> bool:
     return all((AGENTS / f"{k}.plist").exists() for k in JOBS)
 
@@ -107,6 +133,11 @@ def keep_in_sync() -> str | None:
 def install(on: bool = True) -> str:
     if not supported():
         return "Automatic checks are available on a Mac only."
+    where = blocked_location()
+    if on and where:
+        return (f"Can't turn on yet: the BeatNFL folder is in {where}, which macOS doesn't let background jobs open. "
+                f"Move the BeatNFL folder out of {where} into your home folder, run Install BeatNFL.command once, "
+                "then turn this on.")
     AGENTS.mkdir(parents=True, exist_ok=True)
     for label in JOBS:
         p = AGENTS / f"{label}.plist"
