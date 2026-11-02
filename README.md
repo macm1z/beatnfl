@@ -76,6 +76,8 @@ Tabs: **This week** (pool and lineups) · **Ask** (questions in plain English, a
 - **Phone access from anywhere** through Tailscale (private network between your devices — nothing exposed to the internet), with a PIN for any visit that isn't from the Mac.
 - **Health** (Data status tab): version, always-on, automatic checks, and every job's last run and result.
 
+**Today** (first tab, built for the phone): next kickoff, your newest saved lineup with each player's latest status (from the morning refresh) and its DK upload file, the prop picks still to play, and any automatic job that failed. It reads what's already saved, so it opens instantly.
+
 **Where to keep the app folder:** not in Downloads, Desktop or Documents — macOS blocks background jobs from opening those, so the automatic checks can't run there. Keep it in your home folder, named “BeatNFL App” (the home folder already has a BeatNFL folder with your data — never replace it); after moving it, run Install BeatNFL.command once (it rebuilds its Python environment for the new place) and switch Automatic checks off and on. The Automatic checks panel shows the last background run and says if it failed.
 
 **Weekly review:** *Evidence → Weekly review → 📋 Review this week* grades a whole week in one place — saved lineup sets (and which projection source would have done best), prop picks (one per prop, by stat, with CLV), the game model against the closing line, and BettingPros' pre-game ratings on the box scores — with a copy-as-text version.

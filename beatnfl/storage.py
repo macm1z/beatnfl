@@ -135,6 +135,14 @@ def get_projection_run(run_id: int) -> tuple[dict, pd.DataFrame]:
     return meta, _df(r["pool"])
 
 
+def latest_run_for_week(season: int, week: int):
+    """The newest projection run saved for a season/week (any slate) — (meta, pool) or None."""
+    with db() as c:
+        r = c.execute("""SELECT p.id FROM projection_runs p JOIN slates s ON s.id=p.slate_id
+                         WHERE s.season=? AND s.week=? ORDER BY p.id DESC LIMIT 1""", (season, week)).fetchone()
+    return get_projection_run(int(r["id"])) if r else None
+
+
 def projection_runs_for_grading() -> pd.DataFrame:
     """Last frozen run per slate created *before* the slate's first kickoff (true pregame forecasts)."""
     with db() as c:

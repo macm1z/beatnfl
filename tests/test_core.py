@@ -1343,3 +1343,35 @@ def test_auto_rebuild_late_swap(monkeypatch):
     new = storage.load_lineup_set(rb["set_id"])["lineups"][0]
     assert gone not in new and "rebuilt" in storage.load_lineup_set(rb["set_id"])["name"]
     assert pipeline.auto_rebuild(run2, Settings(contest="multi")) is None    # multi-entry: alert only
+
+
+def test_today_screen_data():
+    from beatnfl import pipeline, today
+    from beatnfl.sources import dk as _dk
+    future = SAL.read_text(encoding="utf-8-sig").replace("10/18/2026", "12/27/2099")
+    ls = _dk.load_from_file(future.encode())
+    ls.content_hash = "FIXTURE-today"
+    pool = projections.blend(projections.attach_status(ls.players, None), Settings(),
+                             {"paid": pd.read_csv(io.StringIO(future))[["ID", "AvgPointsPerGame"]].rename(
+                                 columns={"ID": "dk_id", "AvgPointsPerGame": "proj_paid"}).astype({"dk_id": str})})
+    run = pipeline.WeekRun(slate=ls, pool=pool, season=2099, week=18)
+    run.slate_id = storage.save_slate(ls, 2099, 18)
+    run.run_id = storage.save_projection_run(run.slate_id, pool, "test", {"paid": "fixture"})
+    out = pipeline.build_lineups(run, optimizer.OptSettings(**optimizer.preset("cash")))
+    pipeline.save_lineups(run, out, "cash wk18", export_files=False)
+    q = out["result"].lineups[0][1]                                   # a player becomes Questionable later
+    p2 = pool.copy(); p2.loc[p2.dk_id == q, "status"] = "Q"
+    storage.save_projection_run(run.slate_id, p2, "test", {"paid": "fixture"})
+    lu = today.lineup(2099, 18)
+    assert lu and len(lu["table"]) == 9 and lu["name"] == "cash wk18" and lu["csv"].startswith("QB")
+    assert lu["flags"].Status.tolist() == ["Questionable"]
+    assert today.lineup(2099, 1) is None
+    storage.save_picks(pd.DataFrame([dict(season=2099, week=18, game="CHI @ ATL", event_id="e9", commence="2099-12-27T18:00:00Z",
+                                          player="Drake London", stat="rec_yds", market="player_reception_yds", line=74.5,
+                                          side="Under", book="fanduel", price=-110, market_p=.5, model_p=.62, fp_proj=60.0,
+                                          model_median=64.0, source="model+FantasyPros")]))
+    pk = today.picks(2099, 18)
+    assert pk.Bet.tolist() == ["Under 74.5 rec yds"] and pk["Model %"].iloc[0] == 62
+    storage.log_status("Morning refresh", "fail", "DraftKings refused")
+    assert any("Morning refresh failed" in h for h in today.health())
+    storage.log_status("Morning refresh", "ok", "fine")

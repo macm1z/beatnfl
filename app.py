@@ -65,6 +65,11 @@ ICON = {"ok": "✅", "warn": "⚠️", "fail": "❌", "skip": "⏭️"}
 STATUS_TXT = {"Q": "Questionable", "D": "Doubtful", "O": "Out", "IR": "IR", "OUT": "Out", "P": "Probable"}
 
 st.markdown("""<style>
+@media (max-width: 640px) {
+  .block-container { padding: 0.8rem 0.6rem 2rem !important; }
+  .stTabs [data-testid="stTab"] { padding: 3px 9px !important; font-size: 0.85rem; }
+  h3 { font-size: 1.15rem !important; }
+}
 .stTabs [role="tablist"] { gap: 8px; flex-wrap: wrap; border-bottom: none; }
 .stTabs [data-testid="stTab"] { border: 1px solid rgba(139,148,158,.45); border-radius: 8px; padding: 5px 14px;
   height: auto; margin: 0; }
@@ -381,8 +386,50 @@ if refresh:
     ss["run_at"] = pd.Timestamp.now(tz=TZ).strftime("%a %-I:%M %p")
     st.rerun()
 
-tab_week, tab_ask, tab_saved, tab_games, tab_props, tab_picks, tab_parlay, tab_yahoo, tab_evidence, tab_load, tab_status = st.tabs(
-    ["This week", "Ask", "Saved lineups", "Games", "Props", "Picks", "Parlay", "My Yahoo team", "Evidence", "Load data", "Data status"])
+tab_today, tab_week, tab_ask, tab_saved, tab_games, tab_props, tab_picks, tab_parlay, tab_yahoo, tab_evidence, tab_load, tab_status = st.tabs(
+    ["Today", "This week", "Ask", "Saved lineups", "Games", "Props", "Picks", "Parlay", "My Yahoo team", "Evidence", "Load data", "Data status"])
+
+# ------------------------------------------------------------------ TODAY (built for the phone too)
+with tab_today:
+    from beatnfl import today as _td
+    _t = _td.summary(offline=offline)
+    if _t.get("error"):
+        st.error(_t["error"])
+    else:
+        _nk = _t["next_kick"]
+        st.markdown(f"### Week {_t['week']}" + (f" · next kickoff **{_nk.tz_convert(TZ):%a %-I:%M %p}**" if pd.notna(_nk) else ""))
+        for _h in _t["health"]:
+            st.error("⚙️ " + _h)
+        _lu = _t["lineup"]
+        with st.container(border=True):
+            st.markdown("**Your lineup**")
+            if not _lu:
+                st.caption("No lineup saved for this week yet — build one on **This week** and click 💾 Save.")
+            else:
+                for _f in _lu["flags"].itertuples():
+                    (st.error if _f.Status in ("Out", "IR", "Doubtful") else st.warning)(
+                        f"{_f.Player} — **{_f.Status}**" + (" · will be rebuilt automatically after inactives" if S.auto_rebuild
+                                                            and S.contest in ("se", "cash") and _f.Status != "Questionable" else ""))
+                st.caption(f"{_lu['name']} · projects **{_lu['proj']}** · ${_lu['salary']:,}"
+                           + (f" · statuses as of {pd.to_datetime(_lu['updated'], utc=True).tz_convert(TZ):%a %-I:%M %p}" if _lu.get("updated") else ""))
+                show(_lu["table"], {"Salary": st.column_config.NumberColumn("Salary", format="$%d"),
+                                    "Proj": st.column_config.NumberColumn("Proj", format="%.1f")}, height=360)
+                if _lu.get("csv"):
+                    st.download_button("⬇ DraftKings upload file", _lu["csv"], file_name=f"DK_upload_{_lu['name']}.csv",
+                                       mime="text/csv", key="today_dk")
+        with st.container(border=True):
+            st.markdown("**Prop picks still to play**")
+            _pk = _t["picks"]
+            if _pk is None or _pk.empty:
+                st.caption("None logged for upcoming games yet — they're found Wednesday evening (or **Picks → Find this week's picks**).")
+            else:
+                show(_pk, {"Odds": st.column_config.NumberColumn("Odds", format="%+d"),
+                           "Model %": st.column_config.NumberColumn("Model %", format="%.0f%%"),
+                           "Market %": st.column_config.NumberColumn("Market %", format="%.0f%%")})
+                st.caption("Unders where the model and FantasyPros agree, 10+ points below the market. Experimental — the "
+                           "full-season test was +2% ± 4.6; track record on the Picks tab.")
+        if not _t["health"]:
+            st.caption("✅ Automatic jobs healthy — details on Data status → Health.")
 
 # ------------------------------------------------------------------ THIS WEEK
 with tab_week:
