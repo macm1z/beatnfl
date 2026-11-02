@@ -66,6 +66,16 @@ Tabs: **This week** (pool and lineups) · **Ask** (questions in plain English, a
 
 **Bet slips (one-tap handoff):** Games (Chances table), Props and Picks have a link for the side the model leans to (none when it doesn't lean) that opens the sportsbook with that bet added to its betslip — from the Odds API's bookmaker deep links, where the book provides them (the best-odds book among yours in the all-books view; pick a sportsbook to use its exact line). You review and place the bet in the book yourself; BeatNFL never places bets. The per-book table on Games links to each game's page.
 
+## 2.0 — runs itself
+
+- **Moves itself out of Downloads:** double-click *Install BeatNFL.command*; if the folder is in Downloads, Desktop or Documents it moves to your home folder as “BeatNFL App” (macOS blocks background jobs in those folders) and re-registers everything. Your data folder (~/BeatNFL) isn't touched.
+- **Always on** (sidebar → Always on · phone): the app runs from login and restarts itself if it stops.
+- **Morning refresh** every day 8:30 AM: slate, injuries, projections, lines.
+- **Sunday auto late swap** (single-entry / cash): when a player in your newest saved lineup is ruled out after inactives, the lineup is rebuilt without him (players already playing stay in), saved, the DK upload file written, and you're alerted.
+- **Phone alerts** through the free ntfy app (private topic; *Send test* in the sidebar).
+- **Phone access from anywhere** through Tailscale (private network between your devices — nothing exposed to the internet), with a PIN for any visit that isn't from the Mac.
+- **Health** (Data status tab): version, always-on, automatic checks, and every job's last run and result.
+
 **Where to keep the app folder:** not in Downloads, Desktop or Documents — macOS blocks background jobs from opening those, so the automatic checks can't run there. Keep it in your home folder, named “BeatNFL App” (the home folder already has a BeatNFL folder with your data — never replace it); after moving it, run Install BeatNFL.command once (it rebuilds its Python environment for the new place) and switch Automatic checks off and on. The Automatic checks panel shows the last background run and says if it failed.
 
 **Weekly review:** *Evidence → Weekly review → 📋 Review this week* grades a whole week in one place — saved lineup sets (and which projection source would have done best), prop picks (one per prop, by stat, with CLV), the game model against the closing line, and BettingPros' pre-game ratings on the box scores — with a copy-as-text version.

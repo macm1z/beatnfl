@@ -1295,3 +1295,51 @@ def test_schedule_refuses_protected_folders(monkeypatch, tmp_path):
     monkeypatch.setattr(schedule, "APP_DIR", tmp_path / "BeatNFL-app")
     (tmp_path / "BeatNFL-app").mkdir()
     assert schedule.blocked_location() is None
+
+
+def test_service_plist_pin_and_alerts(monkeypatch):
+    from beatnfl import service
+    p = service.plist(remote=False)
+    assert p["KeepAlive"] and p["RunAtLoad"] and "--server.address=localhost" in p["ProgramArguments"]
+    assert any(a.endswith("app.py") for a in p["ProgramArguments"]) and "--server.address=0.0.0.0" in service.plist(True)["ProgramArguments"]
+    assert service.is_local(None) and service.is_local("127.0.0.1") and not service.is_local("100.64.1.2")
+    assert service.check_pin(" 1234 ", "1234") and not service.check_pin("1235", "1234") and not service.check_pin("", "")
+    t = service.new_topic()
+    assert t.startswith("beatnfl-") and len(t) >= 20
+    sent = []
+
+    class R:
+        status_code = 200
+    monkeypatch.setattr(service.requests, "post", lambda url, data=None, headers=None, timeout=None: sent.append((url, data, headers)) or R())
+    assert service.push(t, "BeatNFL", "Hurst ruled out", url="http://mac:8501")
+    assert sent[0][0].endswith(t) and sent[0][2]["Click"] == "http://mac:8501" and "Hurst" in sent[0][1].decode()
+    assert not service.push("", "x", "y")
+
+
+def test_auto_rebuild_late_swap(monkeypatch):
+    from beatnfl import pipeline
+    from beatnfl.sources import dk as _dk
+    future = SAL.read_text(encoding="utf-8-sig").replace("10/18/2026", "12/27/2099")
+    ls = _dk.load_from_file(future.encode())
+    ls.content_hash = "FIXTURE-late-swap"
+    ls.slate = _dk.SlateInfo("999001", "FIXTURE", "", 10, 21)
+    pool = projections.blend(projections.attach_status(ls.players, None), Settings(),
+                             {"paid": pd.read_csv(io.StringIO(future))[["ID", "AvgPointsPerGame"]].rename(
+                                 columns={"ID": "dk_id", "AvgPointsPerGame": "proj_paid"}).astype({"dk_id": str})})
+    run = pipeline.WeekRun(slate=ls, pool=pool, season=2099, week=17)
+    run.slate_id = storage.save_slate(ls, 2099, 17)
+    run.run_id = storage.save_projection_run(run.slate_id, pool, "test", {"paid": "fixture"})
+    s = Settings(contest="se")
+    out = pipeline.build_lineups(run, optimizer.OptSettings(**optimizer.preset("se")))
+    pipeline.save_lineups(run, out, "SE wk17", export_files=False)
+    assert pipeline.auto_rebuild(run, s) is None                              # nobody ruled out → nothing to do
+    first = out["result"].lineups[0]
+    gone = pool.set_index("dk_id").loc[first].sort_values("salary").index[-1]  # the priciest player is ruled out
+    p2 = pool.copy()
+    p2.loc[p2.dk_id == gone, ["status", "out"]] = ["O", True]
+    run2 = pipeline.WeekRun(slate=ls, pool=p2, season=2099, week=17, slate_id=run.slate_id)
+    rb = pipeline.auto_rebuild(run2, s)
+    assert rb and rb["set_id"] and pool.set_index("dk_id").at[gone, "name"] in rb["out"] and rb["in"]
+    new = storage.load_lineup_set(rb["set_id"])["lineups"][0]
+    assert gone not in new and "rebuilt" in storage.load_lineup_set(rb["set_id"])["name"]
+    assert pipeline.auto_rebuild(run2, Settings(contest="multi")) is None    # multi-entry: alert only

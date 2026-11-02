@@ -42,6 +42,11 @@ class Settings:
                                                     "espnbet", "betrivers", "hardrockbet", "ballybet", "betparx"])
     yahoo_redirect_uri: str = "https://localhost:8000"   # must match the Redirect URI in your Yahoo app exactly
     bettingpros_api_key: str = ""   # BettingPros Consumer API (personal use; follows your membership)
+    # 2.0 — runs itself
+    ntfy_topic: str = ""            # phone alerts through the ntfy app (private topic name)
+    remote_access: bool = False     # app reachable from your phone over Tailscale (PIN required off the Mac)
+    app_pin: str = ""
+    auto_rebuild: bool = True       # Sunday: rebuild your single-entry/cash lineup when a player in it is ruled out
     anthropic_api_key: str = ""     # Ask tab (platform.claude.com/settings/keys); billed per use by Anthropic
     ask_model: str = "claude-sonnet-5-5"
     # Contest type: "cash" | "se" (single-entry tournament) | "multi" — picks the lineup-builder preset

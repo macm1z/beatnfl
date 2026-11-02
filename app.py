@@ -44,6 +44,18 @@ ensure_dirs()
 S = Settings.load()
 ss = st.session_state
 
+# Phone access: any visit that isn't from the Mac itself needs the PIN set in Settings
+from beatnfl import service as _svc  # noqa: E402
+if S.remote_access and not ss.get("pin_ok") and not _svc.is_local(getattr(st.context, "ip_address", None)):
+    st.title("🏈 BeatNFL")
+    _pin = st.text_input("PIN", type="password", key="pin_try")
+    if _pin:
+        if _svc.check_pin(_pin, S.app_pin):
+            ss["pin_ok"] = True
+            st.rerun()
+        st.error("Wrong PIN.")
+    st.stop()
+
 
 APP_ROOT = Path(__file__).resolve().parent
 if not (APP_ROOT / "beatnfl").exists():  # launched through a wrapper script
@@ -264,17 +276,63 @@ with st.sidebar:
             _where = _sched.blocked_location()
             if _where:
                 st.error(f"**Not running:** the BeatNFL folder is in **{_where}**, and macOS blocks background jobs from "
-                         f"opening {_where} — so the Wednesday picks, game-day checks, closing prices and BettingPros "
-                         f"record haven't been running. Fix (2 minutes): quit BeatNFL, move the BeatNFL folder from {_where} "
-                         "to your home folder (Finder → Go → Home) **and name it “BeatNFL App”** — your home folder already "
-                         "has a folder called BeatNFL that holds your data; never replace it. Then double-click **Install "
-                         "BeatNFL.command** inside “BeatNFL App”, start BeatNFL, and switch this off and on.")
+                         f"opening {_where}. Fix: quit BeatNFL and double-click **Install BeatNFL.command** in the BeatNFL "
+                         "folder — it moves the app to your home folder as “BeatNFL App” and sets everything up again "
+                         "(your data folder isn't touched). Then open BeatNFL from its icon.")
             _lr = _sched.last_run()
             if _lr:
                 st.caption(f"Last background run: {_lr['when']:%a %b %-d %-I:%M %p}" + (" — **failed**" if _lr["error"] else ""))
             _on = st.toggle("On", value=_sched.installed(), key="auto_checks")
             if _on != _sched.installed():
                 st.info(_sched.install(_on))
+    with st.expander("Always on · phone"):
+        if not _svc.supported():
+            st.caption("Available on a Mac.")
+        else:
+            _ao = st.toggle("Always on", _svc.installed(), key="svc_on",
+                            help="BeatNFL runs in the background from login and restarts itself if it stops — "
+                                 "scheduled jobs and your phone always find it running.")
+            if _ao != _svc.installed():
+                st.info(_svc.install(_ao, S.remote_access))
+            st.markdown("**Phone access** (from anywhere, privately)")
+            _pin_new = st.text_input("PIN for phone visits", S.app_pin, type="password", key="pin_set",
+                                     help="Asked on any visit that isn't from this Mac. 4+ digits.")
+            _ra = st.toggle("Allow phone access", S.remote_access, key="ra_on", disabled=len(_pin_new.strip()) < 4)
+            if (_ra, _pin_new.strip()) != (S.remote_access, S.app_pin):
+                S.remote_access, S.app_pin = bool(_ra), _pin_new.strip()
+                S.save()
+                if _svc.installed():
+                    st.info(_svc.install(True, S.remote_access))
+                else:
+                    st.info("Saved. Turn on **Always on** above so the app listens for your phone.")
+            if S.remote_access:
+                st.caption(f"1. Install **Tailscale** on this Mac and your phone, signed in to the same account. "
+                           f"2. On the phone open **http://{_svc.mac_name()}:{_svc.PORT}** and enter the PIN. "
+                           "Add it to your Home Screen (Share → Add to Home Screen). Only your Tailscale devices can reach it; "
+                           "the Mac has to be on.")
+            st.markdown("**Phone alerts**")
+            _tp = st.text_input("ntfy topic", S.ntfy_topic, key="ntfy_topic",
+                                help="Install the free ntfy app on your phone and subscribe to this topic name. "
+                                     "Keep it private — anyone who knows it can read the alerts.")
+            c_a, c_b = st.columns(2)
+            if c_a.button("New topic", key="ntfy_new"):
+                S.ntfy_topic = _svc.new_topic()
+                S.save()
+                st.rerun()
+            if _tp.strip() != S.ntfy_topic:
+                S.ntfy_topic = _tp.strip()
+                S.save()
+            if c_b.button("Send test", key="ntfy_test", disabled=not S.ntfy_topic):
+                st.success("Sent — check your phone.") if _svc.push(S.ntfy_topic, "BeatNFL", "Test alert — you're set.") \
+                    else st.error("Couldn't reach ntfy.sh — check the connection.")
+            if S.ntfy_topic:
+                st.caption(f"In the ntfy app: **+ → Subscribe** → topic **{S.ntfy_topic}**.")
+            _ar = st.checkbox("Auto-rebuild my lineup when a player is ruled out (Sunday)", S.auto_rebuild, key="auto_rb",
+                              help="Single-entry and cash: after inactives post, rebuild without him, save the new DK upload "
+                                   "file and alert you. Players whose games started stay in.")
+            if _ar != S.auto_rebuild:
+                S.auto_rebuild = bool(_ar)
+                S.save()
     offline = st.toggle("Offline mode (use cached data only)", False)
 
 # Games / Props / Picks follow the current NFL week automatically (rechecked every 10 minutes), unless you
@@ -1671,6 +1729,31 @@ with tab_evidence:
 
 # ------------------------------------------------------------------ STATUS
 with tab_status:
+    st.subheader("Health")
+    from beatnfl import schedule as _sch
+    _jobs = [("Morning refresh", "every day 8:30 AM"), ("Midweek picks", "Wed 7:00 PM"),
+             ("Game-day check", "Thu 7 PM · Sun 11:50 AM, 3:10 PM, 7 PM · Mon 7 PM"),
+             ("Closing prices", "before each kickoff window"), ("BettingPros record", "every evening 9:15 PM")]
+    _ds = storage.data_status()
+    _ds = _ds.set_index("source") if not _ds.empty else _ds
+    _rows = []
+    for _n, _when in _jobs:
+        if not _ds.empty and _n in _ds.index:
+            _r = _ds.loc[_n]
+            _t = pd.to_datetime(_r.last_attempt_utc, utc=True).tz_convert(TZ)
+            _rows.append({"Job": _n, "Runs": _when, "Last run": _t.strftime("%a %b %-d %-I:%M %p"),
+                          "Result": ICON.get(_r.status, "") + " " + str(_r.status), "Message": str(_r.message)[:160]})
+        else:
+            _rows.append({"Job": _n, "Runs": _when, "Last run": "never", "Result": "", "Message": ""})
+    h1_, h2_, h3_ = st.columns(3)
+    h1_.metric("Version", __version__)
+    h2_.metric("Always on", "on" if _svc.installed() else "off")
+    h3_.metric("Automatic checks", "on" if _sch.installed() else ("blocked" if _sch.blocked_location() else "off"))
+    if _sch.blocked_location():
+        st.error(f"The app folder is in {_sch.blocked_location()} — background jobs can't run. Run Install BeatNFL.command "
+                 "once: it moves the folder to your home folder as “BeatNFL App”.")
+    show(pd.DataFrame(_rows))
+    st.divider()
     st.markdown("**Something not working?** Click below, then copy the block (copy icon, top right) and paste it to Claude. "
                 "It contains no keys or passwords.")
     if st.button("Copy diagnostics", type="primary"):

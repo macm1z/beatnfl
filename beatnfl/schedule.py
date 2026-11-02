@@ -1,8 +1,10 @@
 """Optional automatic checks on a Mac (launchd), so you don't have to remember them.
 
   Midweek check   Wednesday 7:00 PM — builds the props picks list, logs it, and shows a Mac notification.
+  Morning refresh every day 8:30 AM — slate, injuries, projections and lines, so the app is current.
   Game-day check  after the inactive lists post (Thu 7:00 PM, Sun 11:50 AM / 3:10 PM / 7:00 PM, Mon 7:00 PM)
-                  — re-checks statuses and notifies you if a player in this week's saved lineups is ruled out.
+                  — re-checks statuses; if a player in your saved lineups is ruled out it alerts you, and for
+                  single-entry / cash it rebuilds the lineup without him and saves the new upload file.
   BettingPros     every evening 9:15 PM — grows the BettingPros track record with the day's spare
                   allowance; Wed 8 PM and Sun 11:40 AM also save the week's board (pre-game ratings).
   Closing prices  shortly before each kickoff window (Thu 6:30 PM, Sun 11:45 AM / 3:15 PM / 7:30 PM,
@@ -31,6 +33,8 @@ JOBS = {
                                                           {"Weekday": 0, "Hour": 15, "Minute": 10},
                                                           {"Weekday": 0, "Hour": 19, "Minute": 0},
                                                           {"Weekday": 1, "Hour": 19, "Minute": 0}]),
+    # Morning refresh: slate, injuries, projections and lines saved every day, so the app is current when opened
+    "com.beatnfl.morning": (["refresh", "--notify"], [{"Weekday": d, "Hour": 8, "Minute": 30} for d in range(7)]),
     # BettingPros record: every evening after the daily allowance resets (midnight UTC)
     "com.beatnfl.bettingpros": (["bettingpros"], [{"Weekday": d, "Hour": 21, "Minute": 15} for d in range(7)]),
     "com.beatnfl.bpsnapshot": (["bettingpros", "--snapshot"], [{"Weekday": 3, "Hour": 20, "Minute": 0},
@@ -156,8 +160,16 @@ def install(on: bool = True) -> str:
             if on else "Automatic checks are off.")
 
 
-def notify(title: str, text: str):
-    """Mac notification (no-op elsewhere)."""
+def notify(title: str, text: str, priority: str = "default"):
+    """Mac notification, and a phone alert through ntfy when a topic is set in Settings."""
+    try:
+        from .config import Settings
+        from . import service
+        s = Settings.load()
+        url = f"http://{service.mac_name()}:{service.PORT}" if s.remote_access else None
+        service.push(s.ntfy_topic, title, text, url, priority)
+    except Exception:  # noqa: BLE001 — an alert must never break the job that sends it
+        pass
     if not supported():
         return
     esc = lambda s: s.replace("\\", "\\\\").replace('"', '\\"')

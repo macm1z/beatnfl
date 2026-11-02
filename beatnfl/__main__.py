@@ -147,15 +147,46 @@ def cmd_gamecheck(a):
     r = pipeline.run_week(Settings.load(), progress=lambda m: None)
     al = pipeline.lineup_alerts(r)
     out = al[al.status.isin(["O", "IR", "D"])] if not al.empty else al
+    if not out.empty:
+        ws = storage.list_lineup_sets()
+        ws = ws[(ws.season == r.season) & (ws.week == r.week)]
+        newest = int(ws.id.max()) if not ws.empty else int(out.set.max())
+        out = out[out.set == newest]                 # your newest set — older ones (e.g. before a rebuild) aren't nagged about
     if out.empty:
         msg = "No ruled-out players in this week's saved lineups."
     else:
         names = ", ".join(f"{x.player} ({x.status}, {x.lineups} lineups)" for x in out.drop_duplicates("dk_id").itertuples())
         msg = f"Ruled out in your saved lineups: {names}. Rebuild or swap before lock."
+    s = Settings.load()
+    rb = None
+    if not out.empty and s.auto_rebuild:
+        try:
+            rb = pipeline.auto_rebuild(r, s)
+        except Exception as e:  # noqa: BLE001
+            msg += f" Automatic rebuild failed: {e}"
+    if rb and rb.get("set_id"):
+        msg += (f" Rebuilt your lineup: out {', '.join(rb['out'])} → in {', '.join(rb['in'])} (projects {rb['proj']}). "
+                f"New DraftKings upload file saved in BeatNFL/exports — upload it (Edit Entries) before lock.")
+    elif rb and rb.get("error"):
+        msg += f" Couldn't rebuild automatically: {rb['error']}"
     print(msg)
     storage.log_status("Game-day check", "warn" if not out.empty else "ok", msg)
     if a.notify and not out.empty:
-        schedule.notify("BeatNFL game-day check", msg)
+        schedule.notify("BeatNFL game-day check", msg, priority="high")
+
+
+def cmd_refresh(a):
+    """Morning refresh: slate, injuries, projections and lines saved, so the app is current when opened."""
+    from . import pipeline, schedule, storage
+    from .config import Settings
+    r = pipeline.run_week(Settings.load(), progress=lambda m: None)
+    bad = [x for x in r.steps if x.status == "fail"]
+    msg = (f"{r.season} week {r.week}: " + ("; ".join(f"{x.step} — {x.message[:120]}" for x in bad) if bad else
+           f"{len(r.pool) if r.pool is not None else 0} players refreshed."))
+    print(msg)
+    storage.log_status("Morning refresh", "fail" if bad else "ok", msg)
+    if a.notify and bad:
+        schedule.notify("BeatNFL morning refresh failed", msg)
 
 
 def cmd_backtest_props(a):
@@ -209,6 +240,8 @@ def main():
     cl = sub.add_parser("close")
     cl.add_argument("--notify", action="store_true")
     cl.add_argument("--hours", type=float, default=4.0, help="games starting within this many hours")
+    rf = sub.add_parser("refresh", help="refresh slate, injuries, projections and lines (morning job)")
+    rf.add_argument("--notify", action="store_true")
     bpc = sub.add_parser("bettingpros", help="grow and re-grade the BettingPros track record (daily job)")
     bpc.add_argument("--snapshot", action="store_true", help="also save this week's board before kickoff")
     bpc.add_argument("--notify", action="store_true")
@@ -217,7 +250,7 @@ def main():
     a = p.parse_args()
     {"run": cmd_run, "doctor": cmd_doctor, "backtest": cmd_backtest, "grade": cmd_grade, "app": cmd_app, "update": cmd_update,
      "midweek": cmd_midweek, "close": cmd_close, "backtest-props": cmd_backtest_props,
-     "gamecheck": cmd_gamecheck, "bettingpros": cmd_bettingpros}.get(
+     "gamecheck": cmd_gamecheck, "bettingpros": cmd_bettingpros, "refresh": cmd_refresh}.get(
         a.cmd or "app", cmd_app)(a)
 
 

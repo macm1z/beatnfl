@@ -393,3 +393,48 @@ def lineup_alerts(run: WeekRun) -> pd.DataFrame:
         return out
     return (out.groupby(["set", "set_name", "dk_id", "player", "team", "status"], as_index=False)
                .agg(lineups=("lineup", "nunique")).sort_values(["status", "lineups"], ascending=[True, False]))
+
+
+def auto_rebuild(run: WeekRun, settings: Settings, now=None) -> dict | None:
+    """Sunday late swap for single-entry / cash: when a player in your newest saved lineup for this slate is
+    ruled out (Out / Doubtful / IR), rebuild with the same contest settings. Players whose games have already
+    started stay locked in (DraftKings doesn't allow swapping them). Saves the new set and writes the DK upload
+    file. Returns what changed, or None when nothing needed (or could) be done."""
+    if settings.contest not in ("se", "cash") or run is None or run.pool is None or not run.season:
+        return None
+    al = lineup_alerts(run)
+    if al.empty:
+        return None
+    sets = storage.list_lineup_sets()
+    dg = run.slate.slate.draft_group_id if run.slate and run.slate.slate else None
+    sets = sets[(sets.season == run.season) & (sets.week == run.week) & (sets.draft_group_id.astype(str) == str(dg))]
+    if sets.empty:
+        return None
+    sid = int(sets.id.max())                                  # the newest set for this slate
+    bad = al[(al.set == sid) & al.status.isin(["O", "IR", "D"])]
+    d = storage.load_lineup_set(sid)
+    _, saved = storage.get_projection_run(d["projection_run_id"])
+    first = d["lineups"][0] if d["lineups"] else []
+    sk = saved.set_index("dk_id")
+    old_keys = [sk.at[x, "key"] for x in first if x in sk.index]
+    if bad.empty or not set(bad.dk_id) & set(first):
+        return None                                           # lineup #1 (the one you enter) is unaffected
+    cur = run.pool.drop_duplicates("key").set_index("key")
+    now = now or pd.Timestamp.now(tz="UTC")
+    started = pd.to_datetime(cur.start_utc.replace("", None), utc=True, errors="coerce") <= now
+    locks = [cur.at[k, "dk_id"] for k in old_keys if k in cur.index and bool(started.get(k, False))
+             and str(cur.at[k, "status"]) not in ("O", "IR", "D")]
+    opt = optimizer.OptSettings(min_salary=settings.min_salary, locks=locks, no_offense_vs_dst=settings.no_offense_vs_dst,
+                                **optimizer.preset(settings.contest))
+    out = build_lineups(run, opt)
+    res = out["result"]
+    if not res.lineups:
+        return {"set_id": None, "out": bad.player.tolist(), "error": "; ".join(res.diagnostics) or "no valid lineup"}
+    name = f"{d['name']} · rebuilt {pd.Timestamp.now(tz='America/New_York'):%a %-I:%M %p}"
+    saved_info = save_lineups(run, out, name, export_files=True)
+    new_keys = [run.pool.set_index("dk_id").at[x, "key"] for x in res.lineups[0]]
+    nm = run.pool.drop_duplicates("key").set_index("key").name
+    return {"set_id": saved_info.get("set_id"), "out": [nm.get(k, k) for k in old_keys if k not in new_keys],
+            "in": [nm.get(k, k) for k in new_keys if k not in old_keys], "ruled_out": bad.player.tolist(),
+            "proj": round(float(run.pool.set_index("dk_id").loc[res.lineups[0]].proj.sum()), 1),
+            "files": [str(f) for f in saved_info.get("files", [])], "locked": len(locks)}
