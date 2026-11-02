@@ -702,7 +702,11 @@ def grade_picks(offline=False) -> tuple[pd.DataFrame, dict]:
     summary = {"n": len(pk), "graded": len(done),
                "props": len(one), "props_won": int((one.result == "won").sum()) if len(one) else 0,
                "props_roi": round(float(one.units.mean() * 100), 1) if len(one) else None,
-               "props_roi_se": round(float(one.units.std(ddof=1) / np.sqrt(len(one)) * 100), 1) if len(one) > 1 else None, "won": int((done.result == "won").sum()),
+               "props_roi_se": round(float(one.units.std(ddof=1) / np.sqrt(len(one)) * 100), 1) if len(one) > 1 else None,
+               "by_source": {src: {"props": len(x), "won": int((x.result == "won").sum()),
+                                   "roi": round(float(x.units.mean() * 100), 1),
+                                   "clv": round(float(pk[pk.source == src].clv.mean()), 2) if pk[pk.source == src].clv.notna().any() else None}
+                             for src, x in one.groupby(one.source.fillna("model"))} if len(one) else {}, "won": int((done.result == "won").sum()),
                "lost": int((done.result == "lost").sum()), "push": int((done.result == "push").sum()),
                "units": round(float(done.units.sum()), 2), "roi": round(float(done.units.mean() * 100), 1) if len(done) else None,
                "clv_n": len(cl), "clv_avg": round(float(cl.clv.mean()), 2) if len(cl) else None,
@@ -753,5 +757,75 @@ def build_midweek(settings, season: int | None = None, week: int | None = None, 
         info["new"] = storage.save_picks(picks)
     else:
         info["new"] = 0
+    # off-market prices at your books — logged for closing-line value, and summarized for the alert
+    om = off_market(board[~started(board.commence).values] if "commence" in board else board,
+                    getattr(settings, "my_books", None) or None)
+    info["off_market"] = len(om)
+    info["off_market_top"] = [f"{r.player} {r.side} {r.line:g} {STAT_NAMES.get(r.stat, r.stat).lower()} "
+                              f"{_odds(r.price)} {book_name(r.book)} (+{r.ev * 100:.0f}%)" for r in om.head(3).itertuples()]
+    if not om.empty:
+        info["off_market_new"] = log_off_market(om, season, week)
     info.update({"season": season, "week": week, "fp_note": fp_note, "n": len(picks)})
     return picks, info
+
+
+# ------------------------------------------------------------------ props edge engine: off-market prices
+OFF_MARKET_EV = 0.03      # flag a price worth 3%+ more than the market's own fair chance
+
+
+def off_market(board: pd.DataFrame, books: list | None = None, min_ev: float = OFF_MARKET_EV, min_books: int = 4,
+               bankroll: float = 0.0, kelly: float = 0.25, max_stake: float = 0.02) -> pd.DataFrame:
+    """Line shopping without any model: for each prop line quoted by several books, the market's fair chance is
+    the median of the OTHER books' no-vig chances; a book whose price beats that fair chance by `min_ev` or more
+    is out of line. This is the classic, measurable edge (closing-line value shows whether it holds).
+    Stake = quarter-Kelly on that edge, capped at `max_stake` of the bankroll (0 = don't show stakes)."""
+    if board is None or board.empty:
+        return pd.DataFrame()
+    b = board[(board.stat != "any_td") & board.price.notna() & board.under_price.notna() & board.line.notna()].copy()
+    if b.empty:
+        return pd.DataFrame()
+    b["p_nv"] = [odds.no_vig(odds.implied_prob(o), odds.implied_prob(u)) for o, u in zip(b.price, b.under_price)]
+    rows = []
+    for (game, player, stat, line), g in b.groupby(["game", "player", "stat", "line"]):
+        g = g.dropna(subset=["p_nv"]).drop_duplicates("book")
+        if len(g) < min_books:
+            continue
+        for r in g.itertuples():
+            if books and r.book not in books:
+                continue
+            fair = float(g[g.book != r.book].p_nv.median())
+            for side, price, p, link in (("Over", r.price, fair, getattr(r, "link", None)),
+                                         ("Under", r.under_price, 1 - fair, getattr(r, "under_link", None))):
+                dec = _dec(price)
+                ev = p * dec - 1
+                if ev < min_ev:
+                    continue
+                k = max(0.0, (p * dec - 1) / (dec - 1)) * kelly
+                rows.append({"game": game, "player": player, "stat": stat, "line": line, "side": side, "book": r.book,
+                             "price": price, "fair_p": round(p, 4), "ev": round(ev, 4), "books": len(g),
+                             "stake": round(min(k, max_stake) * bankroll, 2) if bankroll else np.nan,
+                             "link": link, "event_id": getattr(r, "event_id", ""), "commence": getattr(r, "commence", ""),
+                             "market": getattr(r, "market", ""), "model_p_over": getattr(r, "model_p_over", np.nan)})
+    out = pd.DataFrame(rows)
+    return out.sort_values("ev", ascending=False).reset_index(drop=True) if not out.empty else out
+
+
+def off_market_view(o: pd.DataFrame) -> pd.DataFrame:
+    if o is None or o.empty:
+        return pd.DataFrame()
+    model_side = [((m if sd == "Over" else 1 - m) * 100) if pd.notna(m) else np.nan for m, sd in zip(o.model_p_over, o.side)]
+    return pd.DataFrame({
+        "Game": o.game, "Player": o.player,
+        "Bet": [f"{sd} {l:g} {STAT_NAMES.get(s, s).lower()}" for sd, l, s in zip(o.side, o.line, o.stat)],
+        "Book": o.book.map(book_name), "Odds": o.price.round(), "Fair %": (o.fair_p * 100).round(1),
+        "Edge %": (o.ev * 100).round(1), "Books": o.books, "Model %": np.round(model_side, 1),
+        "Stake $": o.stake, "Slip": [odds.bet_link(x) for x in o.link]})
+
+
+def log_off_market(o: pd.DataFrame, season: int, week: int) -> int:
+    """Log off-market prices as picks (source 'off-market') so closing-line value grades them."""
+    if o is None or o.empty:
+        return 0
+    p = o.assign(season=season, week=week, market_p=o.fair_p, model_p=np.nan, fp_proj=np.nan, model_median=np.nan,
+                 source="off-market")
+    return storage.save_picks(p)

@@ -220,6 +220,8 @@ with st.sidebar:
         ubl = st.checkbox("Use sportsbook prop lines in the model", S.use_book_lines,
                           help="Moves the model's projection toward the books' player lines (≈5 Odds API credits per game, "
                                "reused for 3 hours). Tested on 2025: lower miss on unseen weeks.")
+        bk_ = st.number_input("Betting bankroll ($, optional)", 0.0, 1e7, float(S.bankroll or 0), 50.0,
+                              help="Only used to show suggested stakes (quarter-Kelly, max 2%) next to off-market prices. 0 = hide.")
         qh = st.slider("Questionable haircut", 0.5, 1.0, S.questionable_haircut, 0.05,
                        help="Questionable players' Combined projection is multiplied by this.")
         if st.button("Save settings"):
@@ -227,6 +229,7 @@ with st.sidebar:
             S.fantasypros_api_key = fpkey.strip()
             S.anthropic_api_key, S.ask_model = akey.strip(), amodel
             S.bettingpros_api_key = bpkey.strip()
+            S.bankroll = float(bk_)
             S.use_book_lines = bool(ubl)
             S.my_books = list(mybooks) or list(_rsb.DEFAULT_BOOKS)
             S.yahoo_client_id, S.yahoo_client_secret = yid.strip(), ysec.strip()
@@ -1083,6 +1086,40 @@ with tab_props:
                     view = view[view.Difference > 0]
                 elif pick_f.startswith("Only where model disagrees"):
                     view = view[view.Lean.str.contains("Over|Under|Yes")]
+            if not view.empty:
+                # consensus: FantasyPros and BettingPros next to the model, and how many agree with the bet
+                from beatnfl.names import norm_name as _nn2
+                _st = view._key.str.split("|").str[2]
+                _pl = view._key.str.split("|").str[1].map(_nn2)
+                _ln = view._key.map(b.groupby(b.game + "|" + b.player + "|" + b.stat).line.agg(lambda x: x.mode().iloc[0]))
+                fpv = pd.Series(np.nan, index=view.index)
+                if S.fantasypros_api_key:
+                    try:
+                        from beatnfl.sources import fantasypros as _fpx
+                        _fpd, _ = _fpx.projections(S.fantasypros_api_key, season, week, offline=offline)
+                        _fpd = _fpd.assign(nn=_fpd.name.map(_nn2)).drop_duplicates("nn").set_index("nn")
+                        fpv = pd.Series([(_fpd.at[n_, f"fp_{t_}"] if n_ in _fpd.index and f"fp_{t_}" in _fpd else np.nan)
+                                         for n_, t_ in zip(_pl, _st)], index=view.index, dtype=float)
+                    except StepError:
+                        pass
+                bpv = pd.Series(np.nan, index=view.index)
+                _bp = ss.get("bp")
+                if _bp is not None and not _bp.empty and ss.get("bp_week") == (season, week):
+                    _bpi = _bp.assign(nn=_bp.player.map(_nn2)).drop_duplicates(["nn", "stat"]).set_index(["nn", "stat"])
+                    bpv = pd.Series([(_bpi.at[(n_, t_), "bp_proj"] if (n_, t_) in _bpi.index else np.nan) for n_, t_ in zip(_pl, _st)],
+                                    index=view.index, dtype=float)
+                view.insert(view.columns.get_loc("Lean") + 1, "FantasyPros", fpv.round(1))
+                view.insert(view.columns.get_loc("FantasyPros") + 1, "BettingPros", bpv.round(1))
+                def _agree(i):
+                    sd = view.at[i, "_side"]
+                    if sd not in ("Over", "Under"):
+                        return ""
+                    votes = [1]                                    # the model (it made the lean)
+                    for v_ in (fpv[i], bpv[i]):
+                        if pd.notna(v_) and pd.notna(_ln[i]):
+                            votes.append(int((v_ > _ln[i]) == (sd == "Over")))
+                    return f"{sum(votes)} of {len(votes)}"
+                view.insert(view.columns.get_loc("BettingPros") + 1, "Agree", [_agree(i) for i in view.index])
             if view.empty:
                 st.info("No props match these filters.")
             else:
@@ -1096,6 +1133,9 @@ with tab_props:
                     "Difference": st.column_config.NumberColumn("Difference", format="%+.1f", help="Model % − Book %, in percentage points."),
                     "Lean": st.column_config.Column("Lean", help="Model differs by 4+ points (★ = 8+). No lean = no bet suggested."),
                     "Bet": st.column_config.Column("Bet", help="The side the model leans to (blank when it doesn't differ enough from the book)."),
+                    "FantasyPros": st.column_config.NumberColumn("FantasyPros", format="%.1f", help="FantasyPros' projection for this stat."),
+                    "BettingPros": st.column_config.NumberColumn("BettingPros", format="%.1f", help="BettingPros' projection (load it below)."),
+                    "Agree": st.column_config.Column("Agree", help="How many of model / FantasyPros / BettingPros are on the bet's side of the line."),
                     "Bet odds": st.column_config.NumberColumn("Bet odds", format="%+d",
                                                               help="Best price for that side among your sportsbooks (all-books view) or this book's price."),
                     "Best book": st.column_config.Column("Best book", help="Where that price is."),
@@ -1118,6 +1158,30 @@ with tab_props:
             st.caption("\\* Anytime TD is quoted on one side only, so its Book % still includes the margin and runs high. "
                        "**no forecast** = player ruled out or too little history. Click any column header to sort. "
                        "Information only.")
+
+    b_om = ss.get("board")
+    if b_om is not None and not b_om.empty:
+        st.subheader("Off-market prices")
+        st.caption("No model needed: for each prop line quoted by 4+ books, the market's fair chance is the median of the "
+                   "other books (margin removed). A book paying more than that by 3%+ is out of line — the classic, "
+                   "measurable edge. Prices move fast; check the slip before betting. Stakes are quarter-Kelly, capped at 2% "
+                   "of the bankroll in Settings.")
+        om = research.off_market(b_om[~research.started(b_om.commence).values] if "commence" in b_om else b_om,
+                                 S.my_books, bankroll=float(S.bankroll or 0))
+        if om.empty:
+            st.info("No out-of-line prices among your sportsbooks right now.")
+        else:
+            show(research.off_market_view(om), {
+                "Odds": st.column_config.NumberColumn("Odds", format="%+d"),
+                "Fair %": st.column_config.NumberColumn("Fair %", format="%.1f%%", help="The other books' consensus chance, margin removed."),
+                "Edge %": st.column_config.NumberColumn("Edge %", format="%+.1f%%", help="Expected return of this price at the fair chance."),
+                "Model %": st.column_config.NumberColumn("Model %", format="%.0f%%", help="BeatNFL's chance for this side, for reference."),
+                "Stake $": st.column_config.NumberColumn("Stake $", format="$%.2f", help="Quarter-Kelly, max 2% of bankroll (set bankroll in Settings)."),
+                "Slip": st.column_config.LinkColumn("Slip", display_text="Slip ↗")}, height=min(500, 38 + 35 * len(om)))
+            if st.button(f"📌 Log these {len(om)} for the track record", key="log_om",
+                         help="Logged as 'off-market' picks; closing-line value grades them before kickoff."):
+                n_ = research.log_off_market(om, season, week)
+                st.success(f"Logged {n_} new (already-logged props are skipped). See Picks → Track record.")
 
     st.subheader("BettingPros")
     if not S.bettingpros_api_key:
@@ -1267,6 +1331,10 @@ with tab_picks:
             m4.metric("Avg CLV", f"{sm['clv_avg']:+.1f} pts" if sm.get("clv_avg") is not None else "—",
                       help=(f"Beat the close {sm['beat_close']:.0f}% of the time ({sm['clv_n']} picks with a closing price)"
                             if sm.get("clv_n") else "No closing prices recorded yet"))
+            if sm.get("by_source") and len(sm["by_source"]) > 1:
+                st.caption("By rule: " + " · ".join(
+                    f"**{k}** {v['won']}-{v['props'] - v['won']}, ROI {v['roi']:+.1f}%"
+                    + (f", CLV {v['clv']:+.1f}" if v.get("clv") is not None else "") for k, v in sm["by_source"].items()))
             if sm.get("props"):
                 st.caption(f"**One per prop** (alternate lines of the same player/stat counted once): {sm['props_won']}-"
                            f"{sm['props'] - sm['props_won']}, ROI {sm['props_roi']:+.1f}% ± {sm['props_roi_se'] or 0:.1f}. "

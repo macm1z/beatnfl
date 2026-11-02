@@ -96,7 +96,10 @@ def cmd_midweek(a):
     storage.log_status("Midweek picks", "ok", msg)
     if a.notify:
         top = "; ".join(f"{r.player} {r.side} {r.line:g}" for r in picks.head(3).itertuples()) if len(picks) else ""
-        schedule.notify("BeatNFL midweek check", msg + (f" Top: {top}" if top else "") + " Open BeatNFL → Picks.")
+        om = info.get("off_market_top") or []
+        schedule.notify("BeatNFL midweek check", msg + (f" Top: {top}" if top else "")
+                        + (f" Off-market prices ({info['off_market']}): " + "; ".join(om) if om else "")
+                        + " Open BeatNFL → Picks / Props.")
 
 
 def cmd_bettingpros(a):

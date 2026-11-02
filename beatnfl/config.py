@@ -46,6 +46,7 @@ class Settings:
     ntfy_topic: str = ""            # phone alerts through the ntfy app (private topic name)
     remote_access: bool = False     # app reachable from your phone over Tailscale (PIN required off the Mac)
     app_pin: str = ""
+    bankroll: float = 0.0           # only for suggested stakes next to off-market prices (0 = hidden)
     auto_rebuild: bool = True       # Sunday: rebuild your single-entry/cash lineup when a player in it is ruled out
     anthropic_api_key: str = ""     # Ask tab (platform.claude.com/settings/keys); billed per use by Anthropic
     ask_model: str = "claude-sonnet-5-5"

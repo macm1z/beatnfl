@@ -76,6 +76,11 @@ Tabs: **This week** (pool and lineups) · **Ask** (questions in plain English, a
 - **Phone access from anywhere** through Tailscale (private network between your devices — nothing exposed to the internet), with a PIN for any visit that isn't from the Mac.
 - **Health** (Data status tab): version, always-on, automatic checks, and every job's last run and result.
 
+**Props edge engine:**
+- *Off-market prices* (Props tab, and in the Wednesday alert): for each prop line quoted by 4+ books, the fair chance is the median of the other books with their margin removed; any of your books paying 3%+ more than that is flagged with its slip and a quarter-Kelly stake (max 2% of the bankroll you set; 0 hides stakes). No model needed — this is line shopping, and it's logged as “off-market” so closing-line value grades it.
+- *Consensus*: the Props table shows FantasyPros' and BettingPros' projections next to the model, and how many of the three agree with the bet.
+- *Track record by rule*: Picks shows the model Unders rule and off-market prices separately (record, ROI, CLV).
+
 **🎲 Simulate & pick** (This week → Build, cash and single-entry): simulates the slate thousands of times — players on the same team and in the same game move together, each with a full range of outcomes — and ranks ~40 good lineups by their chance to cash (beat the middle of the field) or reach the top 10% (single-entry money). Shows each lineup's average, bad day and big day. Not yet proven to beat simply taking the highest projection (weeks 6–7 replayed: a wash), so the Weekly review tracks the simulated pick against the highest-projected lineup every week.
 
 **Today** (first tab, built for the phone): next kickoff, your newest saved lineup with each player's latest status (from the morning refresh) and its DK upload file, the prop picks still to play, and any automatic job that failed. It reads what's already saved, so it opens instantly.

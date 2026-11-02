@@ -1395,3 +1395,25 @@ def test_simulation_correlations_and_ranking():
     assert len(lus) >= 8 and r.p_cash.is_monotonic_decreasing and set(r.columns) >= {"p_cash", "p_top10", "bad_day", "big_day"}
     r2 = simulate.rank(pool, lus, "se", n=1500)
     assert r2.p_top10.is_monotonic_decreasing and (r2.bad_day < r2.sim_avg).all() and (r2.big_day > r2.sim_avg).all()
+
+
+def test_off_market_prices_and_stakes():
+    from beatnfl import research
+    rows = []
+    for bk, ov, un in (("draftkings", -110, -110), ("fanduel", -112, -108), ("betmgm", -110, -110),
+                       ("williamhill_us", -108, -112), ("fanatics", +120, -150)):   # Fanatics hangs a soft Over
+        rows.append({"game": "CHI @ ATL", "player": "Drake London", "stat": "rec_yds", "market": "player_reception_yds",
+                     "book": bk, "line": 74.5, "price": ov, "under_price": un, "model_p_over": 0.55,
+                     "event_id": "e1", "commence": "2099-10-18T17:00:00Z", "link": f"https://{bk}/o", "under_link": f"https://{bk}/u"})
+    b = pd.DataFrame(rows)
+    o = research.off_market(b, research.DEFAULT_BOOKS, bankroll=1000)
+    assert len(o) == 1 and o.iloc[0].book == "fanatics" and o.iloc[0].side == "Over"
+    assert 0.07 < o.iloc[0].ev < 0.12 and 0 < o.iloc[0].stake <= 20                 # ≈ +10% edge, stake capped at 2%
+    v = research.off_market_view(o)
+    assert v.Slip.iloc[0] == "https://fanatics/o" and v["Model %"].iloc[0] == 55.0
+    assert research.off_market(b.head(3)).empty                                       # fewer than 4 books → no call
+    assert research.off_market(b, ["draftkings"]).empty                               # not offered at your books
+    n = research.log_off_market(o, 2099, 3)
+    assert n == 1
+    g, sm = research.grade_picks()
+    assert "off-market" in set(g.source)
