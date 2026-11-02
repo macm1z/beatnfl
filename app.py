@@ -553,6 +553,35 @@ with tab_week:
                     ss["lineups"], ss["saved_info"] = pipeline.build_lineups(r, o, name=name), None
                 except Exception as e:  # noqa: BLE001
                     st.error(f"Lineup build failed: {e}")
+        if contest in ("cash", "se"):
+            if st.button("🎲 Simulate & pick (≈15 s)", key="sim_btn",
+                         help="Simulates the slate thousands of times (players on the same team/game move together) and "
+                              "ranks ~40 good lineups by their chance to "
+                              + ("cash (beat the middle of the field)." if contest == "cash" else
+                                 "reach the top 10% (the money in single-entry tournaments).")):
+                with st.spinner("Simulating the slate…"):
+                    from beatnfl import simulate as _sim
+                    try:
+                        rk, lus = _sim.best(r.pool, contest, k=40, min_salary=o.min_salary, locks=o.locks, excludes=o.excludes)
+                        ss["sim"] = (contest, rk)
+                        res_ = optimizer.OptResult(lus[:3], 3, "complete",
+                                                   [f"Ranked by simulated chance to {'cash' if contest == 'cash' else 'reach the top 10%'} "
+                                                    f"among {len(lus)} candidate lineups."], 0, 0)
+                        ss["lineups"], ss["saved_info"] = {"result": res_, "opt": o, "set_id": None, "files": [],
+                                                           "duplicate": False}, None
+                    except Exception as e:  # noqa: BLE001
+                        st.error(f"Simulation failed: {e}")
+            sm_ = ss.get("sim")
+            if sm_ and sm_[0] == contest:
+                key_ = "p_cash" if contest == "cash" else "p_top10"
+                st.caption("Simulated: the three lineups below are the top three by chance to "
+                           + ("cash" if contest == "cash" else "reach the top 10%") + ". Compared with the other candidates:")
+                show(sm_[1].drop(columns=["ids", "lineup"]).head(10).rename(columns={
+                    "projected": "Projected", "sim_avg": "Sim avg", "bad_day": "Bad day (10%)", "big_day": "Big day (90%)",
+                    "p_cash": "Cash %", "p_top10": "Top-10% %"}), {
+                    "Cash %": st.column_config.NumberColumn("Cash %", format="%.0f%%", help="Chance to beat the middle of the candidate lineups — like a 50/50 field."),
+                    "Top-10% %": st.column_config.NumberColumn("Top-10% %", format="%.0f%%", help="Chance to finish in their top 10% — the money in single-entry tournaments.")})
+                st.caption("Not proven yet to beat simply taking the highest projection — the Weekly review tracks both each week.")
         out = ss.get("lineups")
         can_save = bool(out and out["result"].lineups) and not ss.get("saved_info")
         if b3.button("💾 Save", width="stretch", disabled=not can_save,
@@ -1472,6 +1501,9 @@ with tab_evidence:
                 st.caption("The same lineups rebuilt from each projection source alone, scored on the real results:")
                 show(d_["sources"].rename(columns={"source": "Projections used", "avg_projected": "Avg projected",
                                                    "avg_actual": "Avg actual", "players_projected": "Players covered"}))
+            if isinstance(d_.get("sim"), pd.DataFrame) and not d_["sim"].empty:
+                st.caption("Simulated pick vs highest-projected lineup, from the same pre-game projections (actual points):")
+                show(d_["sim"])
         else:
             st.caption(d_.get("note") or d_.get("error", ""))
         p_ = rv.get("picks", {})

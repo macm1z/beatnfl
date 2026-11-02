@@ -1375,3 +1375,23 @@ def test_today_screen_data():
     storage.log_status("Morning refresh", "fail", "DraftKings refused")
     assert any("Morning refresh failed" in h for h in today.health())
     storage.log_status("Morning refresh", "ok", "fine")
+
+
+def test_simulation_correlations_and_ranking():
+    from beatnfl import simulate
+    _, pool = pool_from_fixture()
+    X, mg = simulate.draws(pool, n=6000, seed=3)
+    assert abs(X.mean(axis=0) / mg["mean"].to_numpy() - 1).max() < 0.08        # averages match the projections
+    i = mg.reset_index()
+    qb = i[(i.pos == "QB")].sort_values("mean").iloc[-1]
+    wr = i[(i.pos == "WR") & (i.team == qb.team)].sort_values("mean").iloc[-1]
+    rb_other = i[(i.pos == "RB") & (i.team != qb.team) & (i.game != qb.game)].iloc[0]
+    dst_opp = i[(i.pos == "DST") & (i.team == qb.opp)].iloc[0]
+    c = lambda a, b: np.corrcoef(X[:, a], X[:, b])[0, 1]
+    assert c(qb["index"], wr["index"]) > 0.25                                    # QB and his WR move together
+    assert abs(c(qb["index"], rb_other["index"])) < 0.05                         # other games: independent
+    assert c(qb["index"], dst_opp["index"]) < -0.1                               # the defense he faces moves against him
+    r, lus = simulate.best(pool, "cash", k=12, n=1500)
+    assert len(lus) >= 8 and r.p_cash.is_monotonic_decreasing and set(r.columns) >= {"p_cash", "p_top10", "bad_day", "big_day"}
+    r2 = simulate.rank(pool, lus, "se", n=1500)
+    assert r2.p_top10.is_monotonic_decreasing and (r2.bad_day < r2.sim_avg).all() and (r2.big_day > r2.sim_avg).all()

@@ -285,6 +285,11 @@ def test_app_every_button(live, monkeypatch):
         got = len(at.session_state["lineups"]["result"].lineups)
         assert got == n if n else got > 3, (ct, got)
     assert Settings.load().contest == "se"
+    sim_b = [b for b in at.button if b.label.startswith("🎲 Simulate")]
+    assert sim_b
+    sim_b[0].click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert len(at.session_state["lineups"]["result"].lineups) == 3 and at.session_state["sim"][0] == "se"
     # Ask tab: a question runs the tools on this week's pool and offers the built lineups to This week
     at.chat_input(key="ask_q").set_value("Build my cash lineup").run()
     assert not at.exception, [e.value for e in at.exception]

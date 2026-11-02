@@ -52,9 +52,32 @@ def _dfs(season: int, week: int, offline=False) -> dict:
             out["sources"] = grading.compare_sources(last, offline=offline)
         except Exception:  # noqa: BLE001
             pass
+        try:
+            out["sim"] = sim_vs_projection(last, offline=offline)
+        except Exception:  # noqa: BLE001
+            pass
     if not rows and not out["note"]:
         out["note"] = f"No lineup sets saved for {season} week {week}."
     return out
+
+
+def sim_vs_projection(set_id: int, offline=False) -> pd.DataFrame:
+    """Rebuilt from the pre-game projections of that set: the simulator's pick for cash and for single-entry,
+    against the highest-projected lineup — and what each actually scored."""
+    from . import simulate
+    d = storage.load_lineup_set(int(set_id))
+    _, pool = storage.get_projection_run(d["projection_run_id"])
+    sl, _ = storage.get_slate(d["slate_id"])
+    act = grading.actual_points(pool, int(sl["season"]), int(sl["week"]), offline=offline)
+    rows = []
+    for contest in ("cash", "se"):
+        r, lus = simulate.best(pool, contest, k=40, n=3000)
+        top = r.sort_values("projected", ascending=False).iloc[0]
+        a = [float(act.reindex(lu).sum()) for lu in r.ids]
+        rows.append({"contest": "cash" if contest == "cash" else "single-entry",
+                     "simulated pick": round(a[0], 1), "highest projection": round(float(act.reindex(top.ids).sum()), 1),
+                     "middle of candidates": round(float(np.median(a)), 1)})
+    return pd.DataFrame(rows)
 
 
 def _picks(season: int, week: int, offline=False) -> dict:
@@ -141,6 +164,9 @@ def as_text(r: dict) -> str:
         lines.append(d["sets"].to_string(index=False))
         if isinstance(d.get("sources"), pd.DataFrame) and not d["sources"].empty:
             lines.append(d["sources"].to_string(index=False))
+        if isinstance(d.get("sim"), pd.DataFrame) and not d["sim"].empty:
+            lines.append("Simulated pick vs highest projection (actual points):")
+            lines.append(d["sim"].to_string(index=False))
     else:
         lines.append(d.get("note") or d.get("error", ""))
     p = r.get("picks", {})
