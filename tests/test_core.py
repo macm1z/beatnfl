@@ -1417,3 +1417,11 @@ def test_off_market_prices_and_stakes():
     assert n == 1
     g, sm = research.grade_picks()
     assert "off-market" in set(g.source)
+
+
+def test_main_slate_ignores_slates_weeks_ahead():
+    wk9 = dk.SlateInfo("155001", "Sun Nov 8 1:00 PM · 11 games", "2026-11-08T18:00:00Z", 11, 21, "Featured", "")
+    late = dk.SlateInfo("155002", "Sun Nov 8 4:05 PM · 3 games", "2026-11-08T21:05:00Z", 3, 21, "Featured", "(Afternoon)")
+    wk18 = dk.SlateInfo("155989", "Sun Jan 3 12:00 PM · 13 games", "2027-01-03T17:00:00Z", 13, 21, "Featured", "")
+    assert dk.pick_main_slate([wk18, late, wk9]).draft_group_id == "155001"
+    assert dk.pick_main_slate([wk18]).draft_group_id == "155989"          # only one week listed → that one

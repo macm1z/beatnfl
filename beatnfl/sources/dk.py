@@ -106,6 +106,13 @@ def pick_main_slate(slates: list[SlateInfo]) -> SlateInfo:
         raise StepError(STEP, "No NFL Classic slates are open on DraftKings right now.",
                         "Salaries for next week usually post Monday night or Tuesday.",
                         "Try again later, or load DKSalaries.csv manually.")
+    # only this week's slates: DraftKings also lists slates weeks ahead (e.g. a Week 18 slate posted in
+    # November), which would otherwise win on game count
+    starts = pd.to_datetime(pd.Series([s.start_utc for s in slates]), utc=True, errors="coerce")
+    if starts.notna().any():
+        first = starts.min()
+        near = [s for s, t in zip(slates, starts) if pd.isna(t) or t <= first + pd.Timedelta(days=6)]
+        slates = near or slates
     main = [s for s in slates if not s.suffix] or slates
     featured = [s for s in main if s.tag.lower() == "featured"] or main
     return sorted(featured, key=lambda s: (-s.game_count, s.start_utc))[0]
