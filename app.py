@@ -429,8 +429,8 @@ with tab_today:
                 show(_pk, {"Odds": st.column_config.NumberColumn("Odds", format="%+d"),
                            "Model %": st.column_config.NumberColumn("Model %", format="%.0f%%"),
                            "Market %": st.column_config.NumberColumn("Market %", format="%.0f%%")})
-                st.caption("Unders where the model and FantasyPros agree, 10+ points below the market. Experimental — the "
-                           "full-season test was +2% ± 4.6; track record on the Picks tab.")
+                st.caption("Model 10+ points from the market with FantasyPros agreeing. Experimental — track record on the "
+                           "Picks tab.")
         if not _t["health"]:
             st.caption("✅ Automatic jobs healthy — details on Data status → Health.")
 
@@ -1074,7 +1074,7 @@ with tab_props:
             pick_b = c2.selectbox("Sportsbook", books, key="props_book")
             pick_s = c3.selectbox("Sort by", ["Biggest difference", "Sportsbook", "Player"], key="props_sort")
             pick_f = c4.selectbox("Show", ["Every prop", "Only where model is higher (Over / Yes)",
-                                           "Only where model disagrees (4+ pts)"], key="props_show")
+                                           "Only where model disagrees (8+ pts)"], key="props_show")
             p_started = st.toggle("Include games already started", False, key="props_started",
                                   help="Off: only props for games that haven't kicked off.")
             gone = sorted(b[research.started(b.commence).values].game.unique()) if "commence" in b else []
@@ -1131,7 +1131,7 @@ with tab_props:
                     "Model %": st.column_config.NumberColumn("Model %", format="%.0f%%", help="Model's chance of the Over (or Yes)."),
                     "Book %": st.column_config.NumberColumn("Book %", format="%.0f%%", help="The book's chance of the Over (or Yes) with its margin removed."),
                     "Difference": st.column_config.NumberColumn("Difference", format="%+.1f", help="Model % − Book %, in percentage points."),
-                    "Lean": st.column_config.Column("Lean", help="Model differs by 4+ points (★ = 8+). No lean = no bet suggested."),
+                    "Lean": st.column_config.Column("Lean", help="Model differs from the market by 8+ points (★ = 15+). Smaller gaps lost money in testing, so no bet is suggested."),
                     "Bet": st.column_config.Column("Bet", help="The side the model leans to (blank when it doesn't differ enough from the book)."),
                     "FantasyPros": st.column_config.NumberColumn("FantasyPros", format="%.1f", help="FantasyPros' projection for this stat."),
                     "BettingPros": st.column_config.NumberColumn("BettingPros", format="%.1f", help="BettingPros' projection (load it below)."),
@@ -1256,12 +1256,13 @@ with tab_props:
 # ------------------------------------------------------------------ PICKS
 with tab_picks:
     from beatnfl import research as _rs
-    st.warning("**Experimental — no proven edge.** The 2025 backtest on real sportsbook lines found the model adds no "
-               "reliable information beyond the books' prices. The one hint was **Unders where the model is 10+ points "
-               "below the market** (2025: 53.8% won, ROI +2.1% ± 4.6 — could be luck). Picks logs exactly that rule so "
-               "it can be tested on games it has never seen. Research only — don't treat these as bets.")
-    st.caption("Rule being tested: Under, model 10+ points below the market, FantasyPros agrees (when your key is set), "
-               "best price across books. Each pick is logged with that price and graded on the result and the closing line.")
+    st.warning("**Experimental — not proven yet.** 2025 (full season, older model): small model-vs-market gaps lost "
+               "money and only 10+ point gaps were slightly ahead (+2.6%). 2026 weeks 6–7 (current model, 461 props): "
+               "8+ point gaps won 62% (ROI +16% ± 5), 15+ the most, both Overs and Unders — two weeks, so it may be luck. "
+               "Picks logs the rule below every week so it's tested on games it has never seen. Research only.")
+    st.caption("Rule being tested: Over or Under, model 10+ points from the market, FantasyPros agrees (when your key is "
+               "set), best price at your sportsbooks. Each pick is logged with that price and graded on the result and the "
+               "closing line; Overs (added after week 7) and Unders are scored separately.")
     season_k, week_k = int(ss.get("p_season")), int(ss.get("p_week"))
     c1, c2 = st.columns([1.4, 3], vertical_alignment="center")
     find = c1.button("🔎 Find this week's picks", type="primary", width="stretch", disabled=not S.odds_api_key)
@@ -1331,6 +1332,9 @@ with tab_picks:
             m4.metric("Avg CLV", f"{sm['clv_avg']:+.1f} pts" if sm.get("clv_avg") is not None else "—",
                       help=(f"Beat the close {sm['beat_close']:.0f}% of the time ({sm['clv_n']} picks with a closing price)"
                             if sm.get("clv_n") else "No closing prices recorded yet"))
+            if sm.get("by_side") and len(sm["by_side"]) > 1:
+                st.caption("By side: " + " · ".join(f"**{k}** {v['won']}-{v['props'] - v['won']}, ROI {v['roi']:+.1f}%"
+                                                     for k, v in sm["by_side"].items()))
             if sm.get("by_source") and len(sm["by_source"]) > 1:
                 st.caption("By rule: " + " · ".join(
                     f"**{k}** {v['won']}-{v['props'] - v['won']}, ROI {v['roi']:+.1f}%"

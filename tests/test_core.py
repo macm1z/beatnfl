@@ -508,10 +508,10 @@ def test_props_view_readable_consensus_and_filters():
     v = research.props_view(b)
     assert len(v) == 3                                         # one consensus row per player/prop
     dl = v[v.Player == "Drake London"].iloc[0]
-    assert dl.Prop == "Rec yds 74.5" and dl.Book == "3 books" and dl["Model %"] == 63 and dl.Lean == "Over ★"
+    assert dl.Prop == "Rec yds 74.5" and dl.Book == "3 books" and dl["Model %"] == 63 and dl.Lean == "Over"   # 11 pts: a lean (8+), not ★ (15+)
     db = v[v.Player == "Denzel Boston"].iloc[0]
     assert db.Lean == "—" and db.Prop.endswith("*")   # TD 'No' leans are not shown (mostly book margin)
-    assert v[v.Player == "Chris Moore"].iloc[0].Lean == "Yes ★"
+    assert v[v.Player == "Chris Moore"].iloc[0].Lean == "Yes"          # 9.6 pts: a lean, not ★ (15+)
     g = research.props_view(b, game="BAL @ CLE", book="Fanatics")
     assert list(g.Player) == ["Denzel Boston"] and g.iloc[0].Odds == 175
     s = research.props_view(b, book="Caesars")
@@ -736,7 +736,8 @@ def test_midweek_picks_need_fantasypros_agreement_and_take_best_price():
     assert "Drake London" not in set(research.midweek_picks(b, fp_no, min_diff=4, sides=None).player)
     assert len(research.midweek_picks(b, None, min_diff=4, sides=None)) == 2                         # no FantasyPros key → model only
     default = research.midweek_picks(b, fp_yes)                            # the rule under test: Unders, 10+ pts
-    assert list(default.player) == ["Bijan Robinson"] and (default.side == "Under").all()
+    assert set(default.player) == {"Drake London", "Bijan Robinson"}       # both sides at 10+ points (since 2.4)
+    assert dict(zip(default.player, default.side)) == {"Drake London": "Over", "Bijan Robinson": "Under"}
     v = research.picks_view(p)
     assert {"Best odds", "Book", "Market %", "Model %", "Edge at best price %"} <= set(v.columns)
 

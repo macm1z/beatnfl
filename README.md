@@ -76,6 +76,8 @@ Tabs: **This week** (pool and lineups) · **Ask** (questions in plain English, a
 - **Phone access from anywhere** through Tailscale (private network between your devices — nothing exposed to the internet), with a PIN for any visit that isn't from the Mac.
 - **Health** (Data status tab): version, always-on, automatic checks, and every job's last run and result.
 
+**Props model update (2.4, from results):** graded every model lean from weeks 6–7 of 2026 with both sides' real prices (461 props): gaps of 4–8 points were break-even or worse, 8+ points won 62% (ROI +16% ± 5), 15+ the most (Unders +29%, Overs +36%), and Overs did as well as Unders; the model's chances were also more accurate than the market's (Brier .2365 vs .2456). 2025's full season showed the same order (4+ −1.4%, 8+ +0.2%, 10+ +2.6%). Changes: a lean now starts at **8 points** (★ at 15); the Picks rule logs **Overs and Unders** at 10+ with FantasyPros agreeing, and the track record shows each side separately. Two weeks can be luck — the weekly review keeps testing it.
+
 **Props edge engine:**
 - *Off-market prices* (Props tab, and in the Wednesday alert): for each prop line quoted by 4+ books, the fair chance is the median of the other books with their margin removed; any of your books paying 3%+ more than that is flagged with its slip and a quarter-Kelly stake (max 2% of the bankroll you set; 0 hides stakes). No model needed — this is line shopping, and it's logged as “off-market” so closing-line value grades it.
 - *Consensus*: the Props table shows FantasyPros' and BettingPros' projections next to the model, and how many of the three agree with the bet.

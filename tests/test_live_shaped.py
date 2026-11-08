@@ -156,7 +156,7 @@ def test_midweek_picks_end_to_end(live):
     picks, info = research.build_midweek(s, S, W)
     assert info["season"] == S and info["week"] == W and "FantasyPros" in info["fp_note"]
     loose, _ = research.build_midweek(Settings(odds_api_key="k"), S, W)          # model-only list is a superset
-    assert len(loose) >= len(picks) and (loose.empty or (loose.side == "Under").all())
+    assert len(loose) >= len(picks) and (loose.empty or loose.side.isin(research.PICK_SIDES).all())
     assert len(storage.picks()) >= len(loose)
     tbl, sm = research.grade_picks()
     assert sm["n"] == len(storage.picks())

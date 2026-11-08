@@ -347,6 +347,7 @@ BOOK_NAMES = {"draftkings": "DraftKings", "fanduel": "FanDuel", "betmgm": "BetMG
 STAT_NAMES = {"pass_yds": "Pass yds", "pass_att": "Pass att", "pass_cmp": "Completions", "pass_td": "Pass TDs",
               "rush_yds": "Rush yds", "rush_att": "Rush att", "rec": "Receptions", "rec_yds": "Rec yds", "any_td": "Anytime TD"}
 CONSENSUS = "All books (consensus)"
+LEAN_MIN, LEAN_STRONG = 8.0, 15.0    # props: model vs market gap (points) for a lean / a ★ (see MIN_DIFF notes)
 # Games: the game model has not beaten closing lines (2023–25 backtest, and weeks 6–7 of 2026: its margin and
 # total misses were larger than the market's, and its 3+ point disagreements went 1 of 8 against the spread),
 # so no side is recommended and no bet slip is offered. Set a number (e.g. 4.0) to show slips again.
@@ -432,13 +433,13 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
         g = g.merge(slips.reset_index(), on=["game", "player", "stat"], how="left")
         d, td = g, g.stat == "any_td"
     diff = (d.model_p_over - d.book_p_over) * 100
-    strong, lean = diff.abs() >= 8, diff.abs() >= 4
+    strong, lean = diff.abs() >= LEAN_STRONG, diff.abs() >= LEAN_MIN
 
     def label(i):
         if pd.isna(diff[i]):
             return "no forecast"
         if td[i]:
-            return ("Yes ★" if diff[i] >= 8 else "Yes") if diff[i] >= 4 else "—"
+            return ("Yes ★" if diff[i] >= LEAN_STRONG else "Yes") if diff[i] >= LEAN_MIN else "—"
         if not lean[i]:
             return "—"
         side = "Over" if diff[i] > 0 else "Under"
@@ -520,8 +521,13 @@ def blend_fp_stats(fc: pd.DataFrame, fp: pd.DataFrame, weights: dict) -> tuple[p
 # The rule being tested forward. 2025 backtest on real lines (one prop per player-game, 2,472 props):
 # no edge overall; the only hint was Unders where the model sits 10+ points below the market
 # (53.8% won, ROI +2.1% ± 4.6 — not proven). Picks therefore log that rule so it builds evidence.
+# Updated after weeks 6–7 of 2026 (461 graded leans with both sides' real prices): leans of 4–8 points were
+# break-even or worse (Unders −4%), 8+ points won (+16% ± 5), 15+ points most (Unders +29% ± 9, Overs +36% ± 13);
+# Overs at 10+ did as well as Unders. 2025 (older model, full season) showed the same order: 4+ −1.4%,
+# 8+ +0.2%, 10+ +2.6%. So: a lean starts at 8 points, ★ at 15, and the picks rule logs both sides at 10+
+# (FantasyPros must agree) — tracked by side so the Overs addition is judged on its own.
 MIN_DIFF = 10.0
-PICK_SIDES = ("Under",)
+PICK_SIDES = ("Under", "Over")
 
 
 def _dec(american) -> float:
@@ -703,6 +709,8 @@ def grade_picks(offline=False) -> tuple[pd.DataFrame, dict]:
                "props": len(one), "props_won": int((one.result == "won").sum()) if len(one) else 0,
                "props_roi": round(float(one.units.mean() * 100), 1) if len(one) else None,
                "props_roi_se": round(float(one.units.std(ddof=1) / np.sqrt(len(one)) * 100), 1) if len(one) > 1 else None,
+               "by_side": {sd: {"props": len(x), "won": int((x.result == "won").sum()),
+                                "roi": round(float(x.units.mean() * 100), 1)} for sd, x in one.groupby("side")} if len(one) else {},
                "by_source": {src: {"props": len(x), "won": int((x.result == "won").sum()),
                                    "roi": round(float(x.units.mean() * 100), 1),
                                    "clv": round(float(pk[pk.source == src].clv.mean()), 2) if pk[pk.source == src].clv.notna().any() else None}
