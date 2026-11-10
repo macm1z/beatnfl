@@ -1426,3 +1426,14 @@ def test_main_slate_ignores_slates_weeks_ahead():
     wk18 = dk.SlateInfo("155989", "Sun Jan 3 12:00 PM · 13 games", "2027-01-03T17:00:00Z", 13, 21, "Featured", "")
     assert dk.pick_main_slate([wk18, late, wk9]).draft_group_id == "155001"
     assert dk.pick_main_slate([wk18]).draft_group_id == "155989"          # only one week listed → that one
+
+
+def test_fair_prob_calibration():
+    from beatnfl.research import fair_prob, MODEL_WEIGHT
+    assert MODEL_WEIGHT == 0.40
+    assert abs(fair_prob(0.5, 0.5) - 0.5) < 1e-9
+    f = fair_prob(0.24, 0.47)                # an overconfident Under read is pulled toward the market
+    assert 0.24 < f < 0.47 and abs(f - 0.37) < 0.03
+    arr = fair_prob(np.array([0.2, 0.8]), np.array([0.5, 0.5]))
+    assert arr.shape == (2,) and abs(arr[0] + arr[1] - 1) < 1e-9
+    assert fair_prob(0.0, 0.5) > 0          # clipped, never 0/1

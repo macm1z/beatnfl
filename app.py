@@ -1130,6 +1130,7 @@ with tab_props:
                                                                   help="The model's most likely result, corrected for how its past forecasts missed."),
                     "Model %": st.column_config.NumberColumn("Model %", format="%.0f%%", help="Model's chance of the Over (or Yes)."),
                     "Book %": st.column_config.NumberColumn("Book %", format="%.0f%%", help="The book's chance of the Over (or Yes) with its margin removed."),
+                    "Fair %": st.column_config.NumberColumn("Fair %", format="%.0f%%", help="Calibrated chance of the Over: 40% model, 60% market. The model alone runs too far from 50% — this matched results best in weeks 6–9."),
                     "Difference": st.column_config.NumberColumn("Difference", format="%+.1f", help="Model % − Book %, in percentage points."),
                     "Lean": st.column_config.Column("Lean", help="Model differs from the market by 8+ points (★ = 15+). Smaller gaps lost money in testing, so no bet is suggested."),
                     "Bet": st.column_config.Column("Bet", help="The side the model leans to (blank when it doesn't differ enough from the book)."),
@@ -1291,7 +1292,9 @@ with tab_picks:
             show(_rs.picks_view(pk_), {
                 "Best odds": st.column_config.NumberColumn("Best odds", format="%+d", help="Best price for this side among your sportsbooks (Settings → My sportsbooks)."),
                 "Market %": st.column_config.NumberColumn("Market %", format="%.0f%%", help="All books' consensus chance for this side, margin removed."),
-                "Model %": st.column_config.NumberColumn("Model %", format="%.0f%%", help="BeatNFL's chance for this side."),
+                "Model %": st.column_config.NumberColumn("Model %", format="%.0f%%", help="BeatNFL's raw chance for this side (runs too far from 50% — see Fair %)."),
+                "Fair %": st.column_config.NumberColumn("Fair %", format="%.0f%%", help="Calibrated chance for this side: 40% model, 60% market."),
+                "Expected return %": st.column_config.NumberColumn("Expected return %", format="%+.1f", help="Return per $1 at the best price if Fair % is right."),
                 "FantasyPros": st.column_config.NumberColumn("FantasyPros", format="%.1f", help="FantasyPros' projection for the stat (TD: chance 0–1)."),
                 "Model median": st.column_config.NumberColumn("Model median", format="%.1f"),
                 "Edge at best price %": st.column_config.NumberColumn("Edge at best price %", format="%+.1f",
@@ -1329,9 +1332,11 @@ with tab_picks:
                       help="Won-lost-push for finished games")
             m3.metric("Units", f"{sm['units']:+.2f}" if sm["graded"] else "—",
                       help="Profit at the logged price, 1 unit per pick" + (f" · ROI {sm['roi']:+.1f}%" if sm.get("roi") is not None else ""))
-            m4.metric("Avg CLV", f"{sm['clv_avg']:+.1f} pts" if sm.get("clv_avg") is not None else "—",
-                      help=(f"Beat the close {sm['beat_close']:.0f}% of the time ({sm['clv_n']} picks with a closing price)"
-                            if sm.get("clv_n") else "No closing prices recorded yet"))
+            m4.metric("Line moved your way", f"{sm['moved_toward']:.0f}%" if sm.get("moved_toward") is not None else "—",
+                      help=(f"Market's fair chance at kickoff vs when logged: moved toward the pick {sm['moved_toward']:.0f}%, "
+                            f"away {sm['moved_away']:.0f}%, average {sm['move_avg']:+.1f} pts ({sm['clv_n']} picks). "
+                            f"Strict CLV (counts the book's margin) {sm['clv_avg']:+.1f} pts, beat it {sm['beat_close']:.0f}%."
+                            if sm.get("clv_n") and sm.get("move_avg") is not None else "No closing prices recorded yet"))
             if sm.get("by_side") and len(sm["by_side"]) > 1:
                 st.caption("By side: " + " · ".join(f"**{k}** {v['won']}-{v['props'] - v['won']}, ROI {v['roi']:+.1f}%"
                                                      for k, v in sm["by_side"].items()))
@@ -1348,12 +1353,14 @@ with tab_picks:
                 "Week": tbl.week, "Game": tbl.game, "Player": tbl.player,
                 "Prop": [("Anytime TD" if s_ == "any_td" else f"{_rs.STAT_NAMES.get(s_, s_)} {l_:g}") for s_, l_ in zip(tbl.stat, tbl.line)],
                 "Side": tbl.side, "Odds": tbl.price.round(), "Book": tbl.book.map(_rs.book_name),
-                "Taken %": (tbl.taken_p * 100).round(1), "Close %": (tbl.close_p * 100).round(1), "CLV": tbl.clv,
+                "Taken %": (tbl.taken_p * 100).round(1), "Close %": (tbl.close_p * 100).round(1),
+                "Line move": tbl.line_move if "line_move" in tbl else np.nan, "CLV": tbl.clv,
                 "Actual": tbl.actual, "Result": tbl.result, "Units": tbl.units.round(2)})
             show(v, {"Odds": st.column_config.NumberColumn("Odds", format="%+d"),
                      "Taken %": st.column_config.NumberColumn("Taken %", format="%.1f%%", help="Chance implied by the logged price"),
                      "Close %": st.column_config.NumberColumn("Close %", format="%.1f%%", help="Market's fair chance at the close"),
-                     "CLV": st.column_config.NumberColumn("CLV", format="%+.1f", help="Close % − Taken %. Positive = beat the close."),
+                     "Line move": st.column_config.NumberColumn("Line move", format="%+.1f", help="Market's fair chance at the close − when logged. Positive = the market moved your way."),
+                     "CLV": st.column_config.NumberColumn("CLV", format="%+.1f", help="Close % − Taken % (strict: includes the book's margin). Positive = beat the close."),
                      "Units": st.column_config.NumberColumn("Units", format="%+.2f")})
 
     st.caption("Automatic checks (Wednesday picks, game-day lineup check, closing prices) are in the sidebar.")

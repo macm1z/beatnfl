@@ -94,7 +94,9 @@ def _picks(season: int, week: int, offline=False) -> dict:
         return {"picks": n, "won %": round(float(100 * (x.result == "won").mean()), 1), "units": round(float(x.units.sum()), 1),
                 "ROI %": round(float(100 * x.units.mean()), 1),
                 "± (luck)": round(float(100 * x.units.std(ddof=1) / np.sqrt(n)), 1) if n > 1 else None,
-                "avg CLV": round(float(x.clv.mean()), 2) if x.clv.notna().any() else None}
+                "avg CLV": round(float(x.clv.mean()), 2) if x.clv.notna().any() else None,
+                "line moved your way %": (round(float(100 * (x.line_move.dropna() > 0).mean()), 1)
+                                          if "line_move" in x and x.line_move.notna().any() else None)}
     return {"summary": {"all logged": s(g), "one per prop": s(one)},
             "by_stat": pd.DataFrame([{"stat": research.STAT_NAMES.get(k, k), **s(x)} for k, x in one.groupby("stat")])}
 

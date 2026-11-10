@@ -265,10 +265,11 @@ def props_board(key: str, season: int, week: int, fc: pd.DataFrame, pm, markets=
                        under_link=None)
         b = pd.concat([b[b.market != "player_anytime_td"], y], ignore_index=True)
     b["edge"] = (b.model_p_over - b.book_p_over).round(3)
+    b["fair_p_over"] = np.where(b.stat == "any_td", np.nan, fair_prob(b.model_p_over, b.book_p_over))
     b["model_lean"] = np.where(b.edge > 0, "Over", np.where(b.edge < 0, "Under", ""))
     storage.save_quotes(b.rename(columns={}), "prop", season, week, model_version=getattr(pm, "version", ""))
     cols = ["game", "player", "stat", "book", "line", "price", "under_price", "model_pred", "model_median", "book_p_over",
-            "model_p_over", "edge", "model_lean", "source_ts", "event_id", "commence", "market", "link", "under_link"]
+            "model_p_over", "fair_p_over", "edge", "model_lean", "source_ts", "event_id", "commence", "market", "link", "under_link"]
     return b[cols].sort_values(["game", "player", "stat", "book"]).reset_index(drop=True), info
 
 
@@ -347,6 +348,24 @@ BOOK_NAMES = {"draftkings": "DraftKings", "fanduel": "FanDuel", "betmgm": "BetMG
 STAT_NAMES = {"pass_yds": "Pass yds", "pass_att": "Pass att", "pass_cmp": "Completions", "pass_td": "Pass TDs",
               "rush_yds": "Rush yds", "rush_att": "Rush att", "rec": "Receptions", "rec_yds": "Rec yds", "any_td": "Anytime TD"}
 CONSENSUS = "All books (consensus)"
+# Calibration (weeks 6–9 of 2026, 1,131 graded props, one per player-stat-week): the model's direction is right but
+# its probabilities run too far from 50% (says 24% → 34% happened; says 64% → 49%). Mixing it with the market's
+# no-vig price in log-odds, 40% model / 60% market, scored better than either alone (Brier .2451 vs market .2472,
+# model .2495; .2462 when each week was held out). "Fair %" uses this; the Lean still comes from the model-vs-market
+# gap, which ranks props the same way. The model's Under tilt is not a bias: Overs hit 46.2%, the model said 45.6%,
+# the market 49.6%.
+MODEL_WEIGHT = 0.40
+
+
+def fair_prob(model_p, market_p, w: float = MODEL_WEIGHT):
+    """Calibrated chance: model and market no-vig probability mixed in log-odds (works on scalars or arrays)."""
+    mp = np.clip(np.asarray(model_p, dtype=float), 0.02, 0.98)
+    bp = np.clip(np.asarray(market_p, dtype=float), 0.02, 0.98)
+    z = w * np.log(mp / (1 - mp)) + (1 - w) * np.log(bp / (1 - bp))
+    out = 1 / (1 + np.exp(-z))
+    return float(out) if out.ndim == 0 else out
+
+
 LEAN_MIN, LEAN_STRONG = 8.0, 15.0    # props: model vs market gap (points) for a lean / a ★ (see MIN_DIFF notes)
 # Games: the game model has not beaten closing lines (2023–25 backtest, and weeks 6–7 of 2026: its margin and
 # total misses were larger than the market's, and its 3+ point disagreements went 1 of 8 against the spread),
@@ -474,6 +493,8 @@ def props_view(b: pd.DataFrame, game: str | None = None, book: str = CONSENSUS, 
         "Model median": [(np.nan if s == "any_td" else m) for s, m in zip(d.stat, d.model_median)],
         "Model %": (d.model_p_over * 100).round(1).values,
         "Book %": (d.book_p_over * 100).round(1).values,
+        "Fair %": [np.nan if s == "any_td" else round(float(fair_prob(m, b_)) * 100, 1) if pd.notna(m) and pd.notna(b_) else np.nan
+                   for s, m, b_ in zip(d.stat, d.model_p_over, d.book_p_over)],
         "Difference": diff.round(1).values,
         "Lean": [label(i) for i in d.index],
         "Bet": bet_txt,
@@ -526,6 +547,10 @@ def blend_fp_stats(fc: pd.DataFrame, fp: pd.DataFrame, weights: dict) -> tuple[p
 # Overs at 10+ did as well as Unders. 2025 (older model, full season) showed the same order: 4+ −1.4%,
 # 8+ +0.2%, 10+ +2.6%. So: a lean starts at 8 points, ★ at 15, and the picks rule logs both sides at 10+
 # (FantasyPros must agree) — tracked by side so the Overs addition is judged on its own.
+# Week 9 check (weeks 6–9, best price across books): Unders 10+ won 61.9%, ROI +18.7% ± 5.4 (wk 9 +23%); Overs 10+
+# +5.3% ± 10 — unproven but not losing, so both stay. Logged picks (FantasyPros agreeing): 166-77, +29% ± 6.
+# Lines barely move after picks are logged (unchanged 58%, toward 28%, away 14%), so the record isn't yet
+# confirmed by the closing line — keep tracking.
 MIN_DIFF = 10.0
 PICK_SIDES = ("Under", "Over")
 
@@ -588,6 +613,8 @@ def midweek_picks(board: pd.DataFrame, fp: pd.DataFrame | None = None, min_diff:
         slip = g[lk_col][best_i] if lk_col in g else None
         m_side = bp if side in ("Over", "Yes") else 1 - bp
         mo_side = mp if side in ("Over", "Yes") else 1 - mp
+        fair = np.nan if td else float(fair_prob(mp, bp))
+        fair_side = np.nan if td else (fair if side == "Over" else 1 - fair)
         dec = _dec(price)
         rows.append({"game": game, "event_id": g.event_id.iloc[0] if "event_id" in g else "",
                      "commence": g.commence.iloc[0] if "commence" in g else "", "player": player, "stat": stat,
@@ -596,6 +623,8 @@ def midweek_picks(board: pd.DataFrame, fp: pd.DataFrame | None = None, min_diff:
                      "fp_proj": fp_val, "model_median": g.model_median.iloc[0] if "model_median" in g else np.nan,
                      "fp_agrees": agrees, "edge_market": round((m_side * dec - 1) * 100, 1),
                      "edge_model": round((mo_side * dec - 1) * 100, 1), "diff": round(abs(diff), 1),
+                     "fair_p": round(fair_side, 4) if pd.notna(fair_side) else np.nan,
+                     "edge_fair": round((fair_side * dec - 1) * 100, 1) if pd.notna(fair_side) else np.nan,
                      "source": "model+FantasyPros" if agrees else "model", "link": slip})
     out = pd.DataFrame(rows)
     return out.sort_values("diff", ascending=False).reset_index(drop=True) if not out.empty else out
@@ -612,6 +641,8 @@ def picks_view(p: pd.DataFrame) -> pd.DataFrame:
         "Prop": [("Anytime TD" if s == "any_td" else f"{STAT_NAMES.get(s, s)} {l:g}") for s, l in zip(p.stat, p.line)],
         "Side": p.side, "Best odds": p.price.round(), "Book": p.book.map(book_name),
         "Market %": (p.market_p * 100).round(1), "Model %": (p.model_p * 100).round(1),
+        "Fair %": (p.fair_p * 100).round(1) if "fair_p" in p else np.nan,
+        "Expected return %": p.edge_fair if "edge_fair" in p else np.nan,
         "FantasyPros": p.fp_proj.round(2) if "fp_proj" in p else np.nan,
         "Model median": p.model_median.round(1) if "model_median" in p else np.nan,
         "Edge at best price %": p.edge_market,
@@ -676,6 +707,9 @@ def grade_picks(offline=False) -> tuple[pd.DataFrame, dict]:
     pk["close_p"] = [_close_prob(prices, r) if go else np.nan for r, go in zip(pk.itertuples(), started)]
     pk["taken_p"] = pk.price.map(odds.implied_prob)
     pk["clv"] = ((pk.close_p - pk.taken_p) * 100).round(1)   # + = your price was better than the close
+    # CLV above counts the book's margin against you (a −110 price that never moves scores about −2.4). Line
+    # movement compares like with like — the market's no-vig chance when logged vs at kickoff: + = moved your way.
+    pk["line_move"] = ((pk.close_p - pk.market_p) * 100).round(1) if "market_p" in pk else np.nan
     # results
     seasons = sorted(set(pk.season.astype(int)))
     try:
@@ -718,7 +752,10 @@ def grade_picks(offline=False) -> tuple[pd.DataFrame, dict]:
                "lost": int((done.result == "lost").sum()), "push": int((done.result == "push").sum()),
                "units": round(float(done.units.sum()), 2), "roi": round(float(done.units.mean() * 100), 1) if len(done) else None,
                "clv_n": len(cl), "clv_avg": round(float(cl.clv.mean()), 2) if len(cl) else None,
-               "beat_close": round(float((cl.clv > 0).mean() * 100), 1) if len(cl) else None}
+               "beat_close": round(float((cl.clv > 0).mean() * 100), 1) if len(cl) else None,
+               "move_avg": round(float(cl.line_move.mean()), 2) if len(cl) and cl.line_move.notna().any() else None,
+               "moved_toward": round(float((cl.line_move > 0).mean() * 100), 1) if len(cl) else None,
+               "moved_away": round(float((cl.line_move < 0).mean() * 100), 1) if len(cl) else None}
     return pk.drop(columns=["nn"]), summary
 
 
