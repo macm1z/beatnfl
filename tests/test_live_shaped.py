@@ -226,7 +226,7 @@ def test_app_every_button(live, monkeypatch):
     assert not at.exception, [e.value for e in at.exception]
     labels = ["⟳ Refresh", "⚙ Build lineups", "💾 Save", "Load roster & projections", "Load matchups",
               "Forecast every player this week", "Load props", "Grade frozen forecasts", "Grade live weights", "Copy diagnostics", "Check for updates",
-              "🔎 Find this week's picks", "Grade picks", "Record closing prices now", "Use these weights", "📊 Grade against actual results", "⟳ Refresh"]
+              "🔎 Find this week's picks", "Grade picks", "Record closing prices now", "Use for DraftKings", "Use for Props too", "📊 Grade against actual results", "⟳ Refresh"]
     at.text_area(key="pasted_proj").input(live["_paste"])
     for lab in labels:
         btn = [b for b in at.button if b.label == lab]
@@ -311,7 +311,7 @@ def test_app_every_button(live, monkeypatch):
     assert any(b.label == "Run the props backtest" for b in at.button)
     assert any("paused by the credit limit" in m.value for m in at.markdown)
     s2 = Settings.load()
-    assert s2.pos_weights, "Use these weights did not save per-position weights"
+    assert s2.pos_weights, "Use for DraftKings did not save per-position weights"
     s2.odds_api_key = s2.yahoo_client_id = s2.yahoo_client_secret = s2.fantasypros_api_key = s2.anthropic_api_key = s2.bettingpros_api_key = ""
     s2.pos_weights, s2.stat_weights = {}, {}
     s2.save()

@@ -1807,14 +1807,19 @@ with tab_evidence:
                              "mae_fantasypros": "Miss: FantasyPros", "mae_blend": "Miss: mix", "w_fantasypros": "FantasyPros share"},
                              ints=("Player-games",), two=("Miss: model", "Miss: FantasyPros", "Miss: mix"), pct=("FantasyPros share",))
                 show(t, tc)
-            u1, u2, _ = st.columns([1.3, 1.3, 3])
-            if u1.button("Use these weights", type="primary"):
+            u1, u2, u3 = st.columns([1.4, 1.4, 1.4])
+            if u1.button("Use for DraftKings", type="primary", help="Combined projection uses these weights per position."):
                 S.pos_weights = c.get("weights", {})
+                S.save()
+                st.success("Saved. Combined now uses these weights per position. Click ⟳ Refresh to apply.")
+            if c.get("stat_weights") and u2.button("Use for Props too",
+                                                  help="Props forecasts mix in FantasyPros' stat lines by these shares. Not yet tested "
+                                                       "against sportsbook lines: the picks calibration and track record were built on "
+                                                       "the model alone, so this changes which props get flagged."):
                 S.stat_weights = c.get("stat_weights", {})
                 S.save()
-                st.success("Saved. Combined now uses these weights per position; Props mixes in FantasyPros' stats "
-                           "where it tested better. Click ⟳ Refresh to apply.")
-            if (S.pos_weights or S.stat_weights) and u2.button("Back to simple weights"):
+                st.success("Saved. Props mixes in FantasyPros' stats by these shares. Click ⟳ Refresh to apply.")
+            if (S.pos_weights or S.stat_weights) and u3.button("Back to simple weights"):
                 S.pos_weights, S.stat_weights = {}, {}
                 S.save()
                 st.success("Back to the single weights in Settings. Click ⟳ Refresh to apply.")

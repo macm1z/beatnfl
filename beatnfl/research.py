@@ -551,6 +551,12 @@ def blend_fp_stats(fc: pd.DataFrame, fp: pd.DataFrame, weights: dict) -> tuple[p
 # +5.3% ± 10 — unproven but not losing, so both stay. Logged picks (FantasyPros agreeing): 166-77, +29% ± 6.
 # Lines barely move after picks are logged (unchanged 58%, toward 28%, away 14%), so the record isn't yet
 # confirmed by the closing line — keep tracking.
+# 2024 full season on real lines (2,273 props, model trained before 2024): model alone Brier .2540 vs market .2497,
+# but it adds information beyond the market (logistic coef .28, z 2.9 — the same ~30–40% model share as MODEL_WEIGHT).
+# Picks rule: 4+ −0.6%, 8+ +1.4% ± 3.3, 10+ +1.9% ± 3.9, 15+ +6.9% ± 6.0; Overs ≥ Unders; lines moved toward 39% /
+# away 39%. Same order as 2025 (10+ +2.6%). So bigger gaps are better, but the long-run edge is a few percent — the
+# 2026 +29% is mostly a good run. By stat (10+): pass yds +21.5% (2025 +8.5%), rush +3.4% (+5.5%), rec yds −10%
+# (−1.2%; 2026 live +25%) — mixed, so no stat is dropped yet.
 MIN_DIFF = 10.0
 PICK_SIDES = ("Under", "Over")
 
