@@ -1073,8 +1073,8 @@ with tab_props:
             books = [research.CONSENSUS] + sorted({research.book_name(x) for x in b.book.unique()})
             pick_b = c2.selectbox("Sportsbook", books, key="props_book")
             pick_s = c3.selectbox("Sort by", ["Biggest difference", "Sportsbook", "Player"], key="props_sort")
-            pick_f = c4.selectbox("Show", ["Every prop", "Only where model is higher (Over / Yes)",
-                                           "Only where model disagrees (8+ pts)"], key="props_show")
+            pick_f = c4.selectbox("Show", ["Every prop", "Leans only (8+ pts, both sides)", "Under leans", "Over / Yes leans"],
+                                  key="props_show_v2", help="Leans = the model differs from the market by 8+ points.")
             p_started = st.toggle("Include games already started", False, key="props_started",
                                   help="Off: only props for games that haven't kicked off.")
             gone = sorted(b[research.started(b.commence).values].game.unique()) if "commence" in b else []
@@ -1082,10 +1082,15 @@ with tab_props:
                 st.caption(f"Hidden — already kicked off: {', '.join(gone)}.")
             view = research.props_view(b, pick_g, pick_b, pick_s, books=S.my_books, include_started=p_started)
             if not view.empty:
-                if pick_f.startswith("Only where model is higher"):
-                    view = view[view.Difference > 0]
-                elif pick_f.startswith("Only where model disagrees"):
+                if pick_f.startswith("Leans only"):
                     view = view[view.Lean.str.contains("Over|Under|Yes")]
+                elif pick_f == "Under leans":
+                    view = view[view.Lean.str.startswith("Under")]
+                elif pick_f.startswith("Over / Yes"):
+                    view = view[view.Lean.str.contains("Over|Yes")]
+                if pick_f != "Every prop":
+                    _lc = view.Lean.str.split(" ").str[0].value_counts()
+                    st.caption(" · ".join(f"{k}: {v}" for k, v in _lc.items()))
             if not view.empty:
                 # consensus: FantasyPros and BettingPros next to the model, and how many agree with the bet
                 from beatnfl.names import norm_name as _nn2

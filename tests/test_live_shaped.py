@@ -244,7 +244,11 @@ def test_app_every_button(live, monkeypatch):
     # the fixture week may already be under way (tests run on game days too) — show started games for these checks
     at.toggle(key="games_started").set_value(True).run()
     at.toggle(key="props_started").set_value(True).run()
-    for key in ("props_show", "games_show", "games_type", "games_game", "games_book", "games_book_game"):
+    sb = at.selectbox(key="props_show_v2")
+    for opt in sb.options:                        # every Show filter, Unders included
+        at.selectbox(key="props_show_v2").set_value(opt).run()
+        assert not at.exception, f"props_show_v2={opt}: {[e.value for e in at.exception]}"
+    for key in ("games_show", "games_type", "games_game", "games_book", "games_book_game"):
         sb = at.selectbox(key=key)
         sb.set_value(sb.options[1]).run()
         assert not at.exception, f"{key}: {[e.value for e in at.exception]}"
