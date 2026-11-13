@@ -201,3 +201,91 @@ def started_legs(legs: list[dict], now=None) -> list[str]:
     ks = [lg.get("kick") for lg in legs]
     flags = started(ks, now) if ks else []
     return [leg_label(lg) for lg, f in zip(legs, flags) if f]
+
+
+# ------------------------------------------------------------------ suggested parlays
+def _side_price(q: dict, side: str):
+    p = q.get("over" if side in ("Over", "Yes") else "under")
+    return p if p is not None and pd.notna(p) else None
+
+
+MAX_GAP = 35.0   # leans this far from the market are more often a model blind spot (role change, news) — left out
+
+
+def suggest(board: pd.DataFrame, books: list | None = None, sizes=(2, 3), top: int = 10, pool: int = 24,
+            max_uses: int = 3, include_started: bool = False, now=None, max_gap: float = MAX_GAP) -> pd.DataFrame:
+    """2–3 leg parlays from this week's prop leans (model vs market 8+ points), one leg per game.
+
+    Each leg's chance is Fair % (model and market mixed, see research.fair_prob); legs are treated as
+    independent, which is why legs from the same game are never combined. Every leg must be offered at the
+    same line at one of your books; the parlay is priced at the book that pays most. Ranked by expected
+    return at Fair %. Information only — parlays multiply the book's margin, and the singles edge behind
+    these legs is a few percent at best (2024–25 backtests)."""
+    from itertools import combinations
+    from .research import LEAN_MIN, fair_prob, started
+    if board is None or board.empty:
+        return pd.DataFrame()
+    b = board[board.stat != "any_td"]
+    if not include_started and "commence" in b:
+        b = b[~started(b.commence, now).values]
+    if b.empty:
+        return pd.DataFrame()
+    cands = []
+    for (game, player, stat), g in b.groupby(["game", "player", "stat"]):
+        ln = g.line.mode().iloc[0] if g.line.notna().any() else np.nan
+        x = g[g.line == ln] if pd.notna(ln) else g
+        mp, bp = x.model_p_over.iloc[0], x.book_p_over.median()
+        if pd.isna(mp) or pd.isna(bp):
+            continue
+        diff = (mp - bp) * 100
+        if abs(diff) < LEAN_MIN or abs(diff) > max_gap:
+            continue
+        side = "Over" if diff > 0 else "Under"
+        f = float(fair_prob(mp, bp))
+        fair = f if side == "Over" else 1 - f
+        prices = {r.book: (r.price if side == "Over" else getattr(r, "under_price", np.nan)) for r in x.itertuples()}
+        prices = {k: v for k, v in prices.items() if pd.notna(v) and (not books or k in books)}
+        if not prices:
+            continue
+        cands.append({"key": f"{game}|{player}|{stat}", "game": game, "player": player, "stat": stat, "line": ln,
+                      "side": side, "fair": fair, "mkt": bp if side == "Over" else 1 - bp, "diff": abs(diff),
+                      "prices": prices})
+    if len(cands) < min(sizes):
+        return pd.DataFrame()
+    # strongest leans first; cap the pool so the combinations stay quick
+    cands = sorted(cands, key=lambda c: -c["fair"] * max(_dec(p) for p in c["prices"].values()))[:pool]
+    rank = {bk: i for i, bk in enumerate(books or [])}
+    rows = []
+    for k in sizes:
+        for combo in combinations(cands, k):
+            if len({c["game"] for c in combo}) < k:
+                continue                                    # one leg per game
+            common = set.intersection(*(set(c["prices"]) for c in combo))
+            if not common:
+                continue
+            decs = {bk: float(np.prod([_dec(c["prices"][bk]) for c in combo])) for bk in common}
+            bk = sorted(decs, key=lambda x: (-round(decs[x], 6), rank.get(x, len(rank))))[0]
+            dec = decs[bk]
+            p = float(np.prod([c["fair"] for c in combo]))
+            pk = float(np.prod([c["mkt"] for c in combo]))
+            ev = p * dec - 1
+            if ev <= 0:
+                continue
+            rows.append({"Legs": k, "Parlay": " + ".join(
+                f"{c['player']} {c['side']} {c['line']:g} {STAT_NAMES.get(c['stat'], c['stat']).lower()}" for c in combo),
+                "Book": book_name(bk), "Odds": american(dec), "Pays on $10": round(10 * dec, 2),
+                "Win chance %": round(100 * p, 1), "Market chance %": round(100 * pk, 1),
+                "Expected return %": round(100 * ev, 1),
+                "_keys": [c["key"] for c in combo], "_sides": [c["side"] for c in combo], "_book": bk})
+    if not rows:
+        return pd.DataFrame()
+    out = pd.DataFrame(rows).sort_values("Expected return %", ascending=False)
+    keep, uses = [], {}
+    for i, r in out.iterrows():                             # variety: no leg in more than max_uses suggestions
+        if all(uses.get(kk, 0) < max_uses for kk in r._keys):
+            keep.append(i)
+            for kk in r._keys:
+                uses[kk] = uses.get(kk, 0) + 1
+        if len(keep) >= top:
+            break
+    return out.loc[keep].reset_index(drop=True)

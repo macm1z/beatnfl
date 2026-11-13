@@ -2043,6 +2043,38 @@ with tab_parlay:
     from beatnfl import parlay as _pl
     st.caption("Build a parlay from **Props** and **Games**: tick rows there and click **➕ Add to parlay**. Information only — "
                "you place it in the sportsbook yourself.")
+    with st.expander("💡 Suggested 2–3 leg parlays", expanded=not ss.get("parlay")):
+        _bd = ss.get("board")
+        if _bd is None or _bd.empty:
+            st.info("Load this week's props first (**Props → Load props**) — suggestions are built from them.")
+        else:
+            _sz = st.radio("Legs", ["2 or 3", "2 only", "3 only"], horizontal=True, key="sug_legs")
+            _sizes = {"2 or 3": (2, 3), "2 only": (2,), "3 only": (3,)}[_sz]
+            sug = _pl.suggest(_bd, S.my_books, sizes=_sizes)
+            if sug.empty:
+                st.info("No parlays to suggest: not enough leans (8+ points from the market) in different games that one of "
+                        "your sportsbooks offers at the same line, or none with a positive expected return.")
+            else:
+                show(sug.drop(columns=["_keys", "_sides", "_book"]), {
+                    "Odds": st.column_config.NumberColumn("Odds", format="%+d", help="Parlay odds at the book that pays most for all legs."),
+                    "Win chance %": st.column_config.NumberColumn("Win chance %", format="%.0f%%",
+                        help="All legs winning, using Fair % (40% model, 60% market) per leg, legs treated as independent."),
+                    "Market chance %": st.column_config.NumberColumn("Market chance %", format="%.0f%%",
+                        help="The same using only the market's fair prices — what the books think."),
+                    "Expected return %": st.column_config.NumberColumn("Expected return %", format="%+.0f",
+                        help="Return per $1 if Fair % is right. An upper-end guess, not a forecast — see the note below.")})
+                st.caption("One leg per game (legs from the same game move together and books price those differently), only "
+                           "leans 8–35 points from the market, best-paying of your books, ranked by expected return. "
+                           "**Reality check:** on full past seasons (2024–25) the single props behind these won about 54–57% "
+                           "with a return of +2% to +7%, and Fair % has only been checked on 4 weeks of 2026. A parlay "
+                           "multiplies the book's margin with every leg, so the expected returns shown are optimistic — "
+                           "and a 3-leg parlay loses about 2 times in 3 even when the picks are good. Information only.")
+                _pick = st.selectbox("Parlay", range(len(sug)), key="sug_pick",
+                                     format_func=lambda i: f"{sug.Odds[i]:+.0f} at {sug.Book[i]} — {sug.Parlay[i]}")
+                if st.button("➕ Use this parlay", key="sug_use"):
+                    new_legs = [x for x in (_pl.prop_leg(_bd, k_, sd_) for k_, sd_ in zip(sug._keys[_pick], sug._sides[_pick])) if x]
+                    ss["parlay"], ss["parlay_v"] = new_legs, ss.get("parlay_v", 0) + 1
+                    st.rerun()
     legs = ss.setdefault("parlay", [])
     if not legs:
         st.info("No legs yet. On **Props** or **Games**, tick the rows you want (left edge of the table) and click "

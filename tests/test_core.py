@@ -1437,3 +1437,27 @@ def test_fair_prob_calibration():
     arr = fair_prob(np.array([0.2, 0.8]), np.array([0.5, 0.5]))
     assert arr.shape == (2,) and abs(arr[0] + arr[1] - 1) < 1e-9
     assert fair_prob(0.0, 0.5) > 0          # clipped, never 0/1
+
+
+def test_parlay_suggest_rules():
+    from beatnfl import parlay
+    rows = []
+    # four games; model leans 8–35 pts at three, one at 50 pts (blind-spot cap), one player with no lean
+    spec = [("G1", "A", 0.30, 0.50), ("G2", "B", 0.65, 0.50), ("G3", "C", 0.35, 0.50), ("G4", "D", 0.0, 0.50),
+            ("G1", "E", 0.50, 0.50), ("G3", "F", 0.33, 0.50)]
+    for g, p, mp, bp in spec:
+        for bk in ("draftkings", "fanduel"):
+            rows.append({"game": g, "player": p, "stat": "rec_yds", "line": 40.5, "book": bk, "price": -110,
+                         "under_price": -110 if bk == "draftkings" else -105, "model_p_over": mp, "book_p_over": bp,
+                         "commence": "2099-01-01T18:00:00Z"})
+    b = pd.DataFrame(rows)
+    s = parlay.suggest(b, ["draftkings", "fanduel"], sizes=(2, 3))
+    assert len(s) and (s["Expected return %"] > 0).all()
+    for keys in s._keys:
+        games = [k.split("|")[0] for k in keys]
+        assert len(set(games)) == len(games)               # one leg per game
+        assert not any(k.split("|")[1] in ("D", "E") for k in keys)   # 50-pt gap and no-lean excluded
+    assert set(s.Legs) <= {2, 3}
+    under_only = s[s.Parlay.str.contains("A Under")]
+    assert (under_only.Book == "FanDuel").all()            # Unders pay more at FanDuel (−105) → priced there
+    assert parlay.suggest(b, ["draftkings"], include_started=False, now=pd.Timestamp("2100-01-01", tz="UTC")).empty

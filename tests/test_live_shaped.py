@@ -277,6 +277,17 @@ def test_app_every_button(live, monkeypatch):
     assert any(w for w in at.warning if "Same-game" in w.value)          # both legs are from the one props game
     [b for b in at.button if b.label == "Clear parlay"][0].click().run()
     assert not at.exception and at.session_state["parlay"] == []
+    # suggested parlays: every size option renders; using one fills the parlay (the fixture may have one game → none)
+    for opt in ("2 only", "3 only", "2 or 3"):
+        at.radio(key="sug_legs").set_value(opt).run()
+        assert not at.exception, [e.value for e in at.exception]
+    use = [b for b in at.button if b.label == "➕ Use this parlay"]
+    if use:
+        use[0].click().run()
+        assert not at.exception and len(at.session_state["parlay"]) >= 2
+        [b for b in at.button if b.label == "Clear parlay"][0].click().run()
+    else:
+        assert any("No parlays to suggest" in i.value for i in at.info)
     # weekly review renders (whatever has been graded for that week)
     [b for b in at.button if b.label == "📋 Review this week"][0].click().run()
     assert not at.exception, [e.value for e in at.exception]
