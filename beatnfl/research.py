@@ -354,7 +354,9 @@ CONSENSUS = "All books (consensus)"
 # model .2495; .2462 when each week was held out). "Fair %" uses this; the Lean still comes from the model-vs-market
 # gap, which ranks props the same way. The model's Under tilt is not a bias: Overs hit 46.2%, the model said 45.6%,
 # the market 49.6%.
-MODEL_WEIGHT = 0.40
+# Week 10 recheck (weeks 6–10, 1,659 props): 30% and 40% tie (Brier .2447 vs .2446; market alone .2478), and the 2024
+# full-season backtest put the model's share at about 28% — so 30%, the value both agree on.
+MODEL_WEIGHT = 0.30
 
 
 def fair_prob(model_p, market_p, w: float = MODEL_WEIGHT):
@@ -557,6 +559,8 @@ def blend_fp_stats(fc: pd.DataFrame, fp: pd.DataFrame, weights: dict) -> tuple[p
 # away 39%. Same order as 2025 (10+ +2.6%). So bigger gaps are better, but the long-run edge is a few percent — the
 # 2026 +29% is mostly a good run. By stat (10+): pass yds +21.5% (2025 +8.5%), rush +3.4% (+5.5%), rec yds −10%
 # (−1.2%; 2026 live +25%) — mixed, so no stat is dropped yet.
+# Week 10: picks 32-35 one per prop (−14% ± 11; Overs +11%, Unders −30%), the model's chances worse than the market's
+# (Brier .2664 vs .2497). Season 2026: 198-113, +19.5% ± 5.2 — still consistent with a small real edge plus a hot start.
 MIN_DIFF = 10.0
 PICK_SIDES = ("Under", "Over")
 

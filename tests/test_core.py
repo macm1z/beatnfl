@@ -1430,10 +1430,10 @@ def test_main_slate_ignores_slates_weeks_ahead():
 
 def test_fair_prob_calibration():
     from beatnfl.research import fair_prob, MODEL_WEIGHT
-    assert MODEL_WEIGHT == 0.40
+    assert MODEL_WEIGHT == 0.30
     assert abs(fair_prob(0.5, 0.5) - 0.5) < 1e-9
     f = fair_prob(0.24, 0.47)                # an overconfident Under read is pulled toward the market
-    assert 0.24 < f < 0.47 and abs(f - 0.37) < 0.03
+    assert 0.24 < f < 0.47 and abs(f - 0.40) < 0.03
     arr = fair_prob(np.array([0.2, 0.8]), np.array([0.5, 0.5]))
     assert arr.shape == (2,) and abs(arr[0] + arr[1] - 1) < 1e-9
     assert fair_prob(0.0, 0.5) > 0          # clipped, never 0/1
